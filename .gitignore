@@ -1,0 +1,26 @@
+# Maven
+target/
+
+# Antigravity IDE (if the folder exists)
+.antigravity/
+
+# VS Code (optional)
+.vscode/
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Java compiled files
+*.class
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
