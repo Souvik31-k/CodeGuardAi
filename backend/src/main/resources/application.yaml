@@ -1,7 +1,6 @@
 spring:
   application:
     name: backend
-
   datasource:
     url: jdbc:postgresql://localhost:5432/CodeGuardDB
     username: CodeGuardUSER
@@ -22,3 +21,7 @@ management:
   endpoint:
     health:
       show-details: always
+
+security:
+  encryption:
+    key: ${ENCRYPTION_KEY}
