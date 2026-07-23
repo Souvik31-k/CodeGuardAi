@@ -32,7 +32,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(InvalidWebhookSignatureException.class)
     public ResponseEntity<String> handleInvalidWebhookSignat(InvalidWebhookSignatureException e) {
-        return ResponseEntity.unprocessableContent().build();
+        return new ResponseEntity<>(HttpStatus.UNAUTHORIZED);
     }
 
     @ExceptionHandler(InvalidWebhookPayloadException.class)

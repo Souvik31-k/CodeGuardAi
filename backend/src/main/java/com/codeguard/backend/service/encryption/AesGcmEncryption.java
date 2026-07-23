@@ -15,7 +15,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class AesGcmEncryption implements EncryptionService {
 
-    @Value("${security.encryption.key}") // directly injects value from the env file.
+    @Value("${security.encryption.key}") // directly injects value from the env file(DotEnv library)- Refer to
+                                         // DotenvConfiguration File.
     private String encryptionKey;
 
     @Override

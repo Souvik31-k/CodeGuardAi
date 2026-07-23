@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:dotenv
   application:
     name: backend
   datasource:

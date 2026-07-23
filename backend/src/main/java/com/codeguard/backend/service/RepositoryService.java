@@ -13,13 +13,19 @@ import com.codeguard.backend.exception.RepositoryAlreadyExistsException;
 import com.codeguard.backend.exception.RepositoryNotFoundException;
 import com.codeguard.backend.model.CodeRepository;
 import com.codeguard.backend.repository.CodeRepositoryRepository;
+import com.codeguard.backend.service.encryption.EncryptionService;
 
 @Service
 public class RepositoryService {
     private final CodeRepositoryRepository repository;
+    private final EncryptionService encryptionService;
+    private final SecretGenerator secretGenerator;
 
-    RepositoryService(CodeRepositoryRepository repository) {
+    RepositoryService(CodeRepositoryRepository repository, EncryptionService encryptionService,
+            SecretGenerator secretGenerator) {
         this.repository = repository;
+        this.encryptionService = encryptionService;
+        this.secretGenerator = secretGenerator;
     }
 
     public CreateRepositoryResponse createRepository(CreateRepositoryRequest request) {
@@ -32,12 +38,17 @@ public class RepositoryService {
         codeRepo.setRepoName(request.getRepoName());
         codeRepo.setUserLogin(request.getUserLogin());
         codeRepo.setMinimumSeverity(request.getMinimumSeverity());
+        codeRepo.setActive(true);
+        String webhookSecret = secretGenerator.generate();
+        String encrypted = encryptionService.encrypt(webhookSecret);
+        codeRepo.setWebhookSecretEncrypted(encrypted);
 
         CodeRepository savedRepo = repository.save(codeRepo);
 
         CreateRepositoryResponse response = new CreateRepositoryResponse();
         response.setRepoId(savedRepo.getRepoId());
         response.setRepoName(savedRepo.getRepoName());
+        response.setGeneratedWebhookSecret(webhookSecret);
 
         return response;
     }

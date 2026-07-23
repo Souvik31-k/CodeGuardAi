@@ -14,9 +14,7 @@ services:
     ports:
       - "5432:5432"
     container_name: postgres-db
-  backend:
-    env_file:
-      - .env
 volumes:
   postgres_data:
       
+ 

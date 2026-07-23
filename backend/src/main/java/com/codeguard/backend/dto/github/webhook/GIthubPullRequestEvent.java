@@ -21,4 +21,6 @@ public class GIthubPullRequestEvent {
     @JsonProperty("pull_request")
     private GithubPullRequestDto pullRequest;
 
+    private GithubSenderDto sender;
+
 }

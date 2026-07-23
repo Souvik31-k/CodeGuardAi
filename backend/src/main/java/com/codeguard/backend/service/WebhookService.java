@@ -9,11 +9,14 @@ import com.codeguard.backend.dto.github.webhook.GIthubPullRequestEvent;
 import com.codeguard.backend.enums.GithubEvent;
 import com.codeguard.backend.enums.PullRequestAction;
 import com.codeguard.backend.exception.InvalidWebhookPayloadException;
+import com.codeguard.backend.exception.InvalidWebhookSignatureException;
 import com.codeguard.backend.exception.RepositoryNotFoundException;
 import com.codeguard.backend.model.CodeRepository;
+import com.codeguard.backend.model.ReviewRun;
 import com.codeguard.backend.repository.CodeRepositoryRepository;
 import com.codeguard.backend.service.encryption.EncryptionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
@@ -26,27 +29,40 @@ public class WebhookService {
     private final ObjectMapper mapper;
     private final CodeRepositoryRepository codeRepository;
     private final EncryptionService encryptionService;
+    private final ReviewRunService reviewRunService;
 
     WebhookService(ObjectMapper mapper, CodeRepositoryRepository codeRepository, SignatureVerifier signatureVerifier,
-            EncryptionService encryptionService) {
+            EncryptionService encryptionService, ReviewRunService reviewRunService) {
         this.mapper = mapper;
         this.codeRepository = codeRepository;
         this.signatureVerifier = signatureVerifier;
         this.encryptionService = encryptionService;
+        this.reviewRunService = reviewRunService;
     }
 
     public void handleWebhook(String event, String signature, String delivery, String payload) {
 
+        GithubEvent githubEvent = GithubEvent.fromheader(event);
+        if (githubEvent == null) {
+            log.info("Ignoring Unsupported github Event '{}' ", event);
+            return;
+        }
+
         try {
             // Deserialize Payload once.
-            GIthubPullRequestEvent webhookEvent = mapper.readValue(payload, GIthubPullRequestEvent.class);
+            JsonNode root = mapper.readTree(payload);
+            JsonNode repositoryNode = root.path("repository");
 
-            // Check if repository or repositoryId is null - catch the error
-            if (webhookEvent.getRepository() == null || webhookEvent.getRepository().getId() == null) {
-                throw new RepositoryNotFoundException("Repository not found");
+            // Check if repository node is missing - catch the error
+            if (repositoryNode.isMissingNode()) {
+                throw new RepositoryNotFoundException("Repository not found.");
             }
 
-            Long repositoryId = webhookEvent.getRepository().getId();
+            Long repositoryId = repositoryNode.path("id").asLong();
+
+            if (repositoryId == 0L) {
+                throw new RepositoryNotFoundException("Repository not found.");
+            }
 
             CodeRepository codeRepo = codeRepository.findByGithubRepoId(repositoryId)
                     .orElseThrow(() -> new RepositoryNotFoundException("Repository not registered."));
@@ -59,35 +75,31 @@ public class WebhookService {
                     .verify(signature,
                             payload,
                             plainWebhookSecret);
+            // if the signate is not validated.
             if (!validSignature) {
-                throw new IllegalArgumentException("Invalid gitHub webhook Signature");
+
+                throw new InvalidWebhookSignatureException("Invalid gitHub webhook Signature");
             }
 
             if (!codeRepo.isActive()) {
-                throw new RepositoryNotFoundException("Repository is InActive.");
+                log.info("Ignoring Webhook for Inactive Repository {}", repositoryId);
+                return;
+            }
+
+            // Handle ping only after the signature is verified.
+
+            if (githubEvent == GithubEvent.PING) {
+
+                handlePing();
+
+                return;
             }
 
             // Todo:
             // Persist github delivery for duplicate delivery detection.
-
-            GithubEvent eve = GithubEvent.fromheader(event);
-            if (eve == null) {
-                log.info("Ignoring Unsupported github Event '{}' ", event);
-                return;
-            }
-
-            switch (eve) {
-
-                case PING:
-                    handlePing();
-                    break;
-
-                case PULL_REQUEST:
-                    handlePullRequest(webhookEvent, codeRepo);
-                    break;
-
-                default:
-                    log.info("Ignoring Github event '{}' ", event);
+            if (githubEvent == GithubEvent.PULL_REQUEST) {
+                GIthubPullRequestEvent webhookEvent = mapper.readValue(payload, GIthubPullRequestEvent.class);
+                handlePullRequest(webhookEvent, codeRepo);
             }
         } catch (JsonProcessingException e) {
             throw new InvalidWebhookPayloadException("Invalid webhook Payload.", e);
@@ -96,7 +108,7 @@ public class WebhookService {
     }
 
     private void handlePing() {
-        log.info("Recieved GitHub webhook Ping.");
+        log.info("Received GitHub webhook Ping.");
     }
 
     private void handlePullRequest(GIthubPullRequestEvent event, CodeRepository repo) {
@@ -107,27 +119,29 @@ public class WebhookService {
         }
         String fullName = event.getRepository().getFullName();
         Long githubRepoId = event.getRepository().getId();
-        Integer pullRequestNumber = event.getPullRequest().getNumber();
-        // String headSha = event.getPullRequest().getHead().getSha();
+        Long pullRequestNumber = event.getPullRequest().getNumber();
+        String headSha = event.getPullRequest().getHead().getSha();
         // String baseSha = event.getPullRequest().getBase().getSha();
         log.info("Processing {} PR #{} for repository {} (GitHub ID: {})", action, pullRequestNumber, fullName,
                 githubRepoId);
 
-        // Todo:
-        // Create ReviewRun
-        // Persist ReviewRun
-        // Trigger SupervisorAgent
-
         switch (action) {
+            // creation of a brand new Pull Request
             case OPENED:
-                handleOpened(event, repo);
+                handleOpened(pullRequestNumber, headSha, repo);
                 break;
+            // Updating the Pull Request with fresh code
             case SYNCHRONIZE:
-                handleSynchronize(event, repo);
+                handleSynchronize(pullRequestNumber, headSha, repo);
                 break;
+            // Reopening an old Pull Request, that was closed without being merged
             case REOPENED:
-                handleReOpened(event, repo);
+                handleReOpened(pullRequestNumber, headSha, repo);
                 break;
+            // two scenario - check pullrequest.merged key
+            // if true - Cannot be Reopened, since already merged with the source branch.
+            // if false - Unmerged- the Pr was rejected , abandoned , or closed without
+            // merging.
             case CLOSED:
                 log.info("No Review Run required for Pull Request Action '{}' ", action);
                 break;
@@ -136,27 +150,27 @@ public class WebhookService {
         }
     }
 
-    private void handleReOpened(GIthubPullRequestEvent event, CodeRepository repo) {
-        log.info("Handle pull request reopened");
+    private void handleOpened(Long pullRequestNumber, String headSha, CodeRepository repo) {
+        log.info("Creating a new Pull Request");
+        ReviewRun reviewRun = reviewRunService.createReviewRun(pullRequestNumber, headSha, repo);
 
         // Todo:
-        // Create Review Run
-        // Save Review Run
         // Trigger Supervisor Agent
     }
 
-    private void handleSynchronize(GIthubPullRequestEvent event, CodeRepository repo) {
+    private void handleSynchronize(Long pullRequestNumber, String headSha, CodeRepository repo) {
         log.info("Handle pull request synchronize");
 
+        ReviewRun reviewRun = reviewRunService.createReviewRun(pullRequestNumber, headSha, repo);
         // Todo:
         // Create Review Run
         // Save Review Run
         // Trigger Supervisor Agent
     }
 
-    private void handleOpened(GIthubPullRequestEvent event, CodeRepository repo) {
-        log.info("Handle pull request opened");
-
+    private void handleReOpened(Long pullRequestNumber, String headSha, CodeRepository repo) {
+        log.info("Handle Reopened Pull Request");
+        ReviewRun reviewRun = reviewRunService.createReviewRun(pullRequestNumber, headSha, repo);
         // Todo:
         // Create Review Run
         // Save Review Run
