@@ -39,4 +39,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleInvalidWebhookPayload(InvalidWebhookPayloadException e) {
         return ResponseEntity.unprocessableContent().build();
     }
+
+    @ExceptionHandler(LlmProviderException.class)
+    public ResponseEntity<String> handleLlmproviderException(LlmProviderException e) {
+        return new ResponseEntity<String>(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
 }
