@@ -44,4 +44,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleLlmproviderException(LlmProviderException e) {
         return new ResponseEntity<String>(HttpStatus.INTERNAL_SERVER_ERROR);
     }
+
+    @ExceptionHandler(GitHubClientExcpetion.class)
+    public ResponseEntity<String> handleGitHubClientException(GitHubClientExcpetion e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+    }
 }

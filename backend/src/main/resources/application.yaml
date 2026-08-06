@@ -35,3 +35,8 @@ llm:
     api-key: ${GROQ_API_KEY}
     model: llama-3.3-70b-versatile
     base-url: https://api.groq.com/openai/v1/chat/completions
+
+github:
+  base-url: https://api.github.com
+  api-version: 2026-03-10
+  access-token: ${ACCESS_TOKEN}

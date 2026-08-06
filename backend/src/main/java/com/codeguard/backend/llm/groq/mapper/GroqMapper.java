@@ -42,6 +42,7 @@ public class GroqMapper {
 
         GroqChoice choice = response.getChoices().getFirst();
         LlmResponse llmResponse = new LlmResponse();
+        llmResponse.setFinishReason(mapFinishReason(choice.getFinishReason()));
         llmResponse.setContent(choice.getMessage().getContent());
         llmResponse.setModel(response.getModel());
 
@@ -58,6 +59,19 @@ public class GroqMapper {
 
     private GroqMessage userMessage(String prompt) {
         return new GroqMessage("user", prompt);
+    }
+
+    private LlmResponse.FinishReason mapFinishReason(String reason) {
+
+        if (reason == null) {
+            return LlmResponse.FinishReason.UNKNOWN;
+        }
+
+        try {
+            return LlmResponse.FinishReason.valueOf(reason.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return LlmResponse.FinishReason.UNKNOWN;
+        }
     }
 
 }

@@ -1,12 +1,15 @@
 package com.codeguard.backend.orchestration.nodes;
 
 import java.util.List;
+import java.util.Map;
 
+import org.bsc.langgraph4j.action.NodeAction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.springframework.stereotype.Component;
 
+import com.codeguard.backend.exception.LlmProviderException;
 import com.codeguard.backend.llm.LlmProvider;
 import com.codeguard.backend.llm.LlmRequest;
 import com.codeguard.backend.llm.LlmResponse;
@@ -19,7 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Component
-public class SupervisorNode {
+public class SupervisorNode implements NodeAction<ReviewState> {
 
     private static final Logger log = LoggerFactory.getLogger(SupervisorNode.class);
     private final LlmProvider llmProvider;
@@ -32,47 +35,93 @@ public class SupervisorNode {
         this.mapper = mapper;
     }
 
-    public ReviewState execute(ReviewState state) {
+    @Override
+    public Map<String, Object> apply(ReviewState state) throws Exception {
         LlmRequest request = prompt.buildPrompt(state);
-        LlmResponse response = llmProvider.generate(request);
+        LlmResponse response;
+
+        try {
+            response = llmProvider.generate(request);
+        } catch (LlmProviderException e) {
+
+            log.error(
+                    "LLM Provider failed for ReviewRun {}",
+                    state.reviewRunId(),
+                    e);
+
+            return failure("LLM provider failed: " + e.getMessage());
+        }
 
         // if the llm return blank or null response
 
         if (response == null || response.getContent() == null || response.getContent().isBlank()) {
-            state.setStatus(ClassificationStatus.FAILED);
-            state.setFailureReason("LLM returned empty response");
+
             log.error(
                     "Supervisor returned an empty response for ReviewRunId {}",
-                    state.getReviewRunId());
+                    state.reviewRunId());
 
-            return state;
+            return failure("Supervisor returned an empty response.");
+
         }
 
-        // Extract the classification from the response.
+        /**
+         * Parsing the response content json to fetch the classification li
+         */
         try {
-            SupervisorClassificationResponse classificationResponse = mapper.readValue(
-                    response.getContent(),
+            log.info("Raw Supervisor Response:\n{}", response.getContent());
+
+            String cleanedJson = extractJson(response.getContent());
+
+            log.info("Cleaned Supervisor Response:\n{}", cleanedJson);
+
+            SupervisorClassificationResponse classificationResponse = mapper.readValue(cleanedJson,
                     SupervisorClassificationResponse.class);
 
             List<FileClassification> classifications = classificationResponse.getClassifications();
 
-            if (classifications == null) {
-                state.setStatus(ClassificationStatus.FAILED);
-                state.setFailureReason("Supervisor returned no classification.");
-                return state;
+            if (classifications == null || classifications.isEmpty()) {
+
+                log.error("Supervisor returned no classifications for ReviewRun {} ", state.reviewRunId());
+
+                return failure("Supervisor returned no classifications.");
             }
 
-            state.setClassifications(classifications);
-            state.setStatus(ClassificationStatus.COMPLETED);
-            state.setFailureReason(null);
+            return Map.of(
+                    ReviewState.STATUS, ClassificationStatus.COMPLETED,
+                    ReviewState.CLASSIFICATIONS, classifications);
 
         } catch (JsonProcessingException e) {
-            state.setStatus(ClassificationStatus.FAILED);
-            state.setFailureReason(e.getMessage());
-            log.error("Failed to parse supervisor response for ReviewRun {}", state.getReviewRunId(), e);
+            log.error("Failed to parse supervisor response for ReviewRun {}", state.reviewRunId(), e);
+
+            return failure(e.getMessage());
+        }
+    }
+
+    private Map<String, Object> failure(String reason) {
+        return Map.of(
+                ReviewState.STATUS, ClassificationStatus.FAILED,
+                ReviewState.FAILURE_REASON, reason);
+    }
+
+    private String extractJson(String response) {
+
+        if (response == null) {
+            return null;
         }
 
-        return state;
+        response = response.trim();
+
+        if (response.startsWith("```json")) {
+            response = response.substring(7);
+        } else if (response.startsWith("```")) {
+            response = response.substring(3);
+        }
+
+        if (response.endsWith("```")) {
+            response = response.substring(0, response.length() - 3);
+        }
+
+        return response.trim();
     }
 
 }

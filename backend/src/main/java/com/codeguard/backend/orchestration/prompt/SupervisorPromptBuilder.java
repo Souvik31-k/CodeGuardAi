@@ -10,58 +10,88 @@ import com.codeguard.backend.orchestration.state.ReviewState;
 
 @Component
 public class SupervisorPromptBuilder {
-    public LlmRequest buildPrompt(ReviewState state) {
-        String systemPrompt = """
-                You are the Supervisor Agent of the CodeGuard AI Platform.
+  public LlmRequest buildPrompt(ReviewState state) {
+    String systemPrompt = """
+        You are the Supervisor Agent of the CodeGuard AI Platform.
 
-                Your task is to classify each changed file into exactly one category.
+        Your job is to classify each changed file into exactly one specialist agent.
 
-                Allowed categories are:
-                - SECURITY
-                - TEST
-                - PERFORMANCE
-                - DOCUMENTATION
+        Classify based on the ACTUAL CODE CHANGES shown in the patch, not only the filename.
 
-                Return ONLY valid JSON.
+        Use these categories:
 
-                Example:
+        - SECURITY
+          Authentication, authorization, encryption, secrets, JWT, passwords,
+          input validation, SQL injection, XSS, CSRF, permissions, OAuth, security configuration.
 
-                {
-                  "classifications": [
-                    {
-                      "filePath":"src/UserService.java",
-                      "category":"SECURITY"
-                    }
-                  ]
-                }
+        - PERFORMANCE
+          Algorithms, loops, caching, database queries, memory usage,
+          concurrency, threading, asynchronous execution, collections,
+          CPU-intensive operations and performance optimizations.
 
-                Do not include explanations.
-                """;
+        - TEST
+          Unit tests, integration tests, mocks, assertions, JUnit,
+          Mockito, TestNG, testing utilities.
 
-        StringJoiner changedFiles = new StringJoiner("\n");
+        - DOCUMENTATION
+          README, Markdown, JavaDoc, comments, documentation,
+          guides, API documentation and docs.
 
-        for (ChangedFile file : state.getChangedFiled()) {
-            changedFiles.add(file.getFilePath());
+        Rules:
+
+        1. Every file must belong to exactly one category.
+        2. Use the patch as the primary evidence.
+        3. Use the filename only if the patch is insufficient.
+        4. Return ONLY valid JSON.
+        5. Do not wrap the JSON inside markdown.
+        6. Do not explain your reasoning.
+
+        Response format:
+
+        {
+          "classifications": [
+            {
+              "filePath": "...",
+              "category": "SECURITY"
+            }
+          ]
         }
+        """;
 
-        String userPrompt = """
-                Review Run ID: %d
+    StringJoiner changedFiles = new StringJoiner("\n\n");
 
-                Pull Request Number: %d
+    for (ChangedFile file : state.changedFiles()) {
+      changedFiles.add("""
+          File:
+          %s
 
-                Changed Files:
-
-                %s
-                """.formatted(
-                state.getReviewRunId(),
-                state.getPullRequestNumber(),
-                changedFiles);
-
-        LlmRequest request = new LlmRequest();
-        request.setSystemPrompt(systemPrompt);
-        request.setUserPrompt(userPrompt);
-        request.setTemperature(0.0);
-
-        return request;
+          Patch:
+          %s
+          """.formatted(
+          file.getFilePath(),
+          file.getPatch() == null
+              ? "(No file patch available)"
+              : file.getPatch()));
     }
+
+    String userPrompt = """
+        Review Run ID: %d
+
+        Pull Request Number: %d
+
+        Changed Files:
+
+        %s
+        """.formatted(
+        state.reviewRunId(),
+        state.pullRequestNumber(),
+        changedFiles);
+
+    LlmRequest request = new LlmRequest();
+    request.setSystemPrompt(systemPrompt);
+    request.setUserPrompt(userPrompt);
+    request.setTemperature(0.0);
+
+    return request;
+  }
 }

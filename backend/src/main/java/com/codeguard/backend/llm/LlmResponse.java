@@ -11,7 +11,7 @@ import lombok.Setter;
 @NoArgsConstructor
 public class LlmResponse {
 
-    private enum FinishReason {
+    public enum FinishReason {
         STOP,
         LENGTH,
         TOOL_CALLS,

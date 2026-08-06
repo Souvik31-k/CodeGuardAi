@@ -14,8 +14,16 @@ import lombok.Setter;
 @NoArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class GithubRepositoryDto {
-    private Long id; // Github Repository Id
+    // Repository id
+    private Long id;
 
+    // Repository Name
+    private String name;
+
+    // Owner + Repository Name
     @JsonProperty("full_name")
     private String fullName;
+
+    // Owner properties
+    private GithubOwnerDto owner;
 }
