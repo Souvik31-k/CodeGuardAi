@@ -68,11 +68,8 @@ public class SupervisorNode implements NodeAction<ReviewState> {
          * Parsing the response content json to fetch the classification li
          */
         try {
-            log.info("Raw Supervisor Response:\n{}", response.getContent());
 
             String cleanedJson = extractJson(response.getContent());
-
-            log.info("Cleaned Supervisor Response:\n{}", cleanedJson);
 
             SupervisorClassificationResponse classificationResponse = mapper.readValue(cleanedJson,
                     SupervisorClassificationResponse.class);

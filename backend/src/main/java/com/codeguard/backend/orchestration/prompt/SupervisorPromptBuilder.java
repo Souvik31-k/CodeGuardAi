@@ -14,7 +14,9 @@ public class SupervisorPromptBuilder {
     String systemPrompt = """
         You are the Supervisor Agent of the CodeGuard AI Platform.
 
-        Your job is to classify each changed file into exactly one specialist agent.
+        Your job is to classify each changed file into exactly one review category.
+
+        The selected category determines which specialist review agent will analyze the file.
 
         Classify based on the ACTUAL CODE CHANGES shown in the patch, not only the filename.
 
@@ -41,7 +43,7 @@ public class SupervisorPromptBuilder {
 
         1. Every file must belong to exactly one category.
         2. Use the patch as the primary evidence.
-        3. Use the filename only if the patch is insufficient.
+        3. If no patch is available, classify the file using its path and filename.
         4. Return ONLY valid JSON.
         5. Do not wrap the JSON inside markdown.
         6. Do not explain your reasoning.
@@ -61,7 +63,21 @@ public class SupervisorPromptBuilder {
     StringJoiner changedFiles = new StringJoiner("\n\n");
 
     for (ChangedFile file : state.changedFiles()) {
+      String patch = file.getPatch();
+      if (patch == null || patch.isBlank()) {
+        patch = """
+            No textual diff is available.
+
+            GitHub omitted the patch because:
+              - the file is binary, or
+              - the diff is too large.
+
+            Classify this file using its path and filename.
+                """;
+      }
       changedFiles.add("""
+          =======================================
+
           File:
           %s
 
@@ -69,9 +85,7 @@ public class SupervisorPromptBuilder {
           %s
           """.formatted(
           file.getFilePath(),
-          file.getPatch() == null
-              ? "(No file patch available)"
-              : file.getPatch()));
+          patch));
     }
 
     String userPrompt = """
