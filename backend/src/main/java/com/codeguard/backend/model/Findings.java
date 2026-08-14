@@ -32,7 +32,7 @@ public class Findings {
         SECURITY,
         QUALITY,
         DOCUMENTATION,
-        TESTING
+        TEST
     }
 
     public enum Severity {

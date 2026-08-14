@@ -86,6 +86,7 @@ public class WebhookService {
                     .verify(signature,
                             payload,
                             plainWebhookSecret);
+
             // if the signate is not validated.
             if (!validSignature) {
 

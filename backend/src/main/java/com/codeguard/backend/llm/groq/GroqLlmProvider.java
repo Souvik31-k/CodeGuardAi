@@ -1,5 +1,6 @@
 package com.codeguard.backend.llm.groq;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -21,7 +22,8 @@ public class GroqLlmProvider implements LlmProvider {
     private final GroqProperties properties;
     private final RestClient restClient;
 
-    public GroqLlmProvider(GroqMapper mapper, GroqProperties properties, RestClient restClient) {
+    public GroqLlmProvider(GroqMapper mapper, GroqProperties properties,
+            @Qualifier("groqRestClient") RestClient restClient) {
         this.mapper = mapper;
         this.properties = properties;
         this.restClient = restClient;

@@ -26,10 +26,9 @@ public class SupervisorPromptBuilder {
           Authentication, authorization, encryption, secrets, JWT, passwords,
           input validation, SQL injection, XSS, CSRF, permissions, OAuth, security configuration.
 
-        - PERFORMANCE
-          Algorithms, loops, caching, database queries, memory usage,
-          concurrency, threading, asynchronous execution, collections,
-          CPU-intensive operations and performance optimizations.
+        - QUALITY
+          Code style, naming conventions, code complexity, duplication,
+          maintainability, design quality, coding-standard violations.
 
         - TEST
           Unit tests, integration tests, mocks, assertions, JUnit,

@@ -3,6 +3,7 @@ package com.codeguard.backend.github.client;
 import java.util.Arrays;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -18,7 +19,7 @@ public class GitHubClient {
         private final RestClient restClient;
         private final GitHubProperties properties;
 
-        public GitHubClient(RestClient restClient, GitHubProperties properties) {
+        public GitHubClient(@Qualifier("gitHubRestClient") RestClient restClient, GitHubProperties properties) {
                 this.restClient = restClient;
                 this.properties = properties;
         }
