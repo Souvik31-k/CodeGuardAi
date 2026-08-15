@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.codeguard.backend.enums.AgentType;
+import com.codeguard.backend.enums.Severity;
 import com.codeguard.backend.llm.LlmProvider;
 import com.codeguard.backend.llm.LlmRequest;
 import com.codeguard.backend.llm.LlmResponse;
@@ -30,145 +31,194 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Component
 public class QualityNode implements AsyncNodeAction<ReviewState> {
 
-    private static final Logger log = LoggerFactory.getLogger(QualityNode.class);
-    private static final long TIMEOUT_SECONDS = 10;
+        private static final Logger log = LoggerFactory.getLogger(QualityNode.class);
+        private static final long TIMEOUT_SECONDS = 10;
 
-    private final QualityPromptBuilder promptBuilder;
-    private final ObjectMapper mapper;
-    private final LlmProvider provider;
-    private final ExecutorService specialistExecutor;
+        private final QualityPromptBuilder promptBuilder;
+        private final ObjectMapper mapper;
+        private final LlmProvider provider;
+        private final ExecutorService specialistExecutor;
 
-    public QualityNode(QualityPromptBuilder promptBuilder, ObjectMapper mapper, LlmProvider provider,
-            ExecutorService speacialistExecutor) {
-        this.promptBuilder = promptBuilder;
-        this.mapper = mapper;
-        this.provider = provider;
-        this.specialistExecutor = speacialistExecutor;
-    }
+        public QualityNode(QualityPromptBuilder promptBuilder, ObjectMapper mapper, LlmProvider provider,
+                        ExecutorService speacialistExecutor) {
+                this.promptBuilder = promptBuilder;
+                this.mapper = mapper;
+                this.provider = provider;
+                this.specialistExecutor = speacialistExecutor;
+        }
 
-    @Override
-    public CompletableFuture<Map<String, Object>> apply(ReviewState state) {
-        List<FileClassification> qualityFiles = state.classifications()
-                .stream()
-                .filter((classification) -> classification
-                        .getCategory() == FileCategory.QUALITY)
-                .toList();
+        @Override
+        public CompletableFuture<Map<String, Object>> apply(ReviewState state) {
 
-        log.info("Recieved Quality files {} for Review Run Id {}", qualityFiles, state.reviewRunId());
+                List<FileClassification> qualityFiles = state.classifications()
+                                .stream()
+                                .filter((classification) -> classification
+                                                .getCategory() == FileCategory.QUALITY)
+                                .toList();
+
+                log.info("Recieved Quality files {} for Review Run Id {}", qualityFiles, state.reviewRunId());
+
+                /**
+                 * No files classified for the Quality Node by the supervisor
+                 */
+                if (qualityFiles.isEmpty()) {
+                        log.info("No Quality files found for Review Run Id: {}. Skipping Quality Agent",
+                                        state.reviewRunId());
+
+                        SpecialistResult result = new SpecialistResult(
+                                        AgentType.QUALITY,
+                                        SpecialistStatus.COMPLETED,
+                                        List.of(),
+                                        null);
+
+                        return CompletableFuture.completedFuture((Map.of(
+                                        ReviewState.QUALITY_RESULT,
+                                        result)));
+
+                }
+
+                List<ChangedFile> changedQualityFiles = state.changedFiles()
+                                .stream()
+                                .filter((changedFile) -> qualityFiles.stream()
+                                                .anyMatch((classification) -> classification.getFilePath()
+                                                                .equals(changedFile.getFilePath())))
+                                .toList();
+
+                LlmRequest request = promptBuilder.buildPrompt(state, changedQualityFiles);
+
+                return CompletableFuture
+                                .supplyAsync(() -> provider.generate(request), specialistExecutor)
+                                .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
+                                .handle((response, exception) -> {
+
+                                        /**
+                                         * Llm call failed or timeout
+                                         */
+
+                                        if (exception != null) {
+
+                                                if (exception instanceof TimeoutException) {
+
+                                                        log.error("Quality Node time out for Review Run Id {}",
+                                                                        state.reviewRunId());
+
+                                                        return new SpecialistResult(
+                                                                        AgentType.QUALITY,
+                                                                        SpecialistStatus.TIMEOUT,
+                                                                        List.of(),
+                                                                        "Quality Node time out.");
+                                                }
+
+                                                log.error("Quality Node Failed to generate Response for Review Run Id {}",
+                                                                state.reviewRunId(), exception);
+
+                                                return new SpecialistResult(
+                                                                AgentType.QUALITY,
+                                                                SpecialistStatus.FAILED,
+                                                                List.of(),
+                                                                exception.getMessage());
+                                        }
+
+                                        /*
+                                         * Llm call succeed
+                                         * parse the response
+                                         */
+
+                                        try {
+                                                List<AgentFinding> findings = parseResponse(response);
+
+                                                log.info("Quality Node completed for Review Run Id {}",
+                                                                state.reviewRunId());
+
+                                                return new SpecialistResult(
+                                                                AgentType.QUALITY,
+                                                                SpecialistStatus.COMPLETED,
+                                                                findings,
+                                                                null);
+
+                                        } catch (Exception e) {
+                                                log.error("Quality Node failed to parse Llm Response for Review Run Id {}",
+                                                                state.reviewRunId());
+
+                                                return new SpecialistResult(
+                                                                AgentType.QUALITY,
+                                                                SpecialistStatus.FAILED,
+                                                                List.of(),
+                                                                "Failed to parse Quality Node Response"
+                                                                                + e.getMessage());
+                                        }
+
+                                }).thenApply((result) -> Map.of(
+                                                ReviewState.QUALITY_RESULT,
+                                                result));
+        }
 
         /**
-         * No files classified for the Quality Node by the supervisor
+         * Parsing the LLM response content to Agent Finding type
          */
-        if (qualityFiles.isEmpty()) {
-            log.info("No Quality files found for Review Run Id: {}. Skipping Quality Agent",
-                    state.reviewRunId());
+        private List<AgentFinding> parseResponse(LlmResponse response) throws Exception {
 
-            SpecialistResult result = new SpecialistResult(
-                    AgentType.QUALITY,
-                    SpecialistStatus.COMPLETED,
-                    List.of(),
-                    null);
+                if (response == null
+                                || response.getContent() == null
+                                || response.getContent().isBlank()) {
 
-            return CompletableFuture.completedFuture((Map.of(
-                    ReviewState.QUALITY_RESULT,
-                    result)));
+                        throw new IllegalStateException(
+                                        "LLM returned invalid response, cannot be parsed.");
+                }
 
-        }
+                String json = cleanJsonResponse(response.getContent());
 
-        List<ChangedFile> changedQualityFiles = state.changedFiles()
-                .stream()
-                .filter((changedFile) -> qualityFiles.stream()
-                        .anyMatch((classification) -> classification.getFilePath()
-                                .equals(changedFile.getFilePath())))
-                .toList();
+                SpecialistAnalysisResponse parsed = mapper.readValue(
+                                json,
+                                SpecialistAnalysisResponse.class);
 
-        LlmRequest request = promptBuilder.buildPrompt(state, changedQualityFiles);
+                if (parsed.getFindings() == null
+                                || parsed.getFindings().isEmpty()) {
 
-        return CompletableFuture
-                .supplyAsync(() -> provider.generate(request), specialistExecutor)
-                .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                        return List.of();
+                }
 
-                .handle((response, exception) -> {
+                List<AgentFinding> findings = parsed.getFindings();
 
-                    /**
-                     * Llm call failed or timeout
-                     */
+                for (AgentFinding finding : findings) {
 
-                    if (exception != null) {
+                        if (finding.getSeverity() == null) {
 
-                        if (exception instanceof TimeoutException) {
+                                log.warn(
+                                                "QUALITY finding '{}' returned without severity. "
+                                                                + "Defaulting severity to MEDIUM.",
+                                                finding.getTitle());
 
-                            log.error("Quality Node time out for Review Run Id {}",
-                                    state.reviewRunId());
-
-                            return new SpecialistResult(
-                                    AgentType.QUALITY,
-                                    SpecialistStatus.TIMEOUT,
-                                    List.of(),
-                                    "Quality Node time out.");
+                                finding.setSeverity(Severity.MEDIUM);
                         }
 
-                        log.error("Quality Node Failed to generate Response for Review Run Id {}",
-                                state.reviewRunId(), exception);
+                        // Agent identity comes from the node, not the LLM.
+                        finding.setAgentType(AgentType.QUALITY);
+                }
 
-                        return new SpecialistResult(
-                                AgentType.QUALITY,
-                                SpecialistStatus.FAILED,
-                                List.of(),
-                                exception.getMessage());
-                    }
-
-                    /*
-                     * Llm call succeed
-                     * parse the response
-                     */
-
-                    try {
-                        List<AgentFinding> findings = parseRespose(response);
-
-                        log.info("Quality Node completed for Review Run Id {}",
-                                state.reviewRunId());
-
-                        return new SpecialistResult(
-                                AgentType.QUALITY,
-                                SpecialistStatus.COMPLETED,
-                                findings,
-                                null);
-
-                    } catch (Exception e) {
-                        log.error("Quality Node failed to parse Llm Response for Review Run Id {}",
-                                state.reviewRunId());
-
-                        return new SpecialistResult(
-                                AgentType.QUALITY,
-                                SpecialistStatus.FAILED,
-                                List.of(),
-                                "Failed to parse Quality Node Response" + e.getMessage());
-                    }
-
-                }).thenApply((result) -> Map.of(
-                        ReviewState.QUALITY_RESULT,
-                        result));
-    }
-
-    /**
-     * Parsing the LLM response content to Agent Finding type
-     * 
-     * @param response
-     * @return List<AgentFinding>
-     * @throws Exception
-     */
-    private List<AgentFinding> parseRespose(LlmResponse response) throws Exception {
-        if (response == null || response.getContent() == null || response.getContent().isBlank()) {
-            throw new IllegalStateException("Llm returned invalid response, cannot be parsed.");
+                return findings;
         }
-        SpecialistAnalysisResponse parsed = mapper.readValue(response.getContent(),
-                SpecialistAnalysisResponse.class);
 
-        if (parsed.getFindings() == null || parsed.getFindings().isEmpty()) {
-            return List.of();
+        private String cleanJsonResponse(String content) {
+
+                String cleaned = content.trim();
+
+                if (cleaned.startsWith("```json")) {
+
+                        cleaned = cleaned.substring(7).trim();
+
+                } else if (cleaned.startsWith("```")) {
+
+                        cleaned = cleaned.substring(3).trim();
+
+                }
+
+                if (cleaned.endsWith("```")) {
+                        cleaned = cleaned.substring(0, cleaned.length() - 3).trim();
+                }
+
+                return cleaned;
         }
-        return parsed.getFindings();
-    }
 
 }

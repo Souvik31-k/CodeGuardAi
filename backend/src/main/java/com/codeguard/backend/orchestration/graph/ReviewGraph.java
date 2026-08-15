@@ -84,7 +84,7 @@ public class ReviewGraph {
 
         } catch (GraphStateException e) {
 
-            throw new RuntimeException(e.getMessage());
+            throw new RuntimeException("Failed to build the Review Graph", e);
 
         }
 

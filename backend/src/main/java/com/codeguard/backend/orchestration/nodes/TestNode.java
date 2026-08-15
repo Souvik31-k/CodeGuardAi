@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.codeguard.backend.enums.AgentType;
+import com.codeguard.backend.enums.Severity;
 import com.codeguard.backend.llm.LlmProvider;
 import com.codeguard.backend.llm.LlmRequest;
 import com.codeguard.backend.llm.LlmResponse;
@@ -30,132 +31,143 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Component
 public class TestNode implements AsyncNodeAction<ReviewState> {
 
-    private static final Logger log = LoggerFactory.getLogger(TestNode.class);
-    private static final long TIMEOUT_SECONDS = 10;
+        private static final Logger log = LoggerFactory.getLogger(TestNode.class);
+        private static final long TIMEOUT_SECONDS = 10;
 
-    private final TestPromptBuilder promptBuilder;
-    private final ObjectMapper mapper;
-    private final LlmProvider provider;
-    private final ExecutorService specialistExecutor;
+        private final TestPromptBuilder promptBuilder;
+        private final ObjectMapper mapper;
+        private final LlmProvider provider;
+        private final ExecutorService specialistExecutor;
 
-    public TestNode(LlmProvider provider, TestPromptBuilder promptBuilder, ObjectMapper mapper,
-            ExecutorService specialistExecutor) {
-        this.provider = provider;
-        this.promptBuilder = promptBuilder;
-        this.mapper = mapper;
-        this.specialistExecutor = specialistExecutor;
-    }
-
-    @Override
-    public CompletableFuture<Map<String, Object>> apply(ReviewState state) {
-
-        List<FileClassification> testFiles = state
-                .classifications()
-                .stream()
-                .filter((file) -> file.getCategory() == FileCategory.TEST)
-                .toList();
-
-        log.info("Received Test files for Review Run Id {}", state.reviewRunId());
-
-        /**
-         * No files classified for the Test Node by the supervisor
-         */
-        if (testFiles.isEmpty()) {
-            log.info("No Test files found for Review Run Id: {}. Skipping Test Agent",
-                    state.reviewRunId());
-
-            SpecialistResult result = new SpecialistResult(
-                    AgentType.TEST,
-                    SpecialistStatus.COMPLETED,
-                    List.of(),
-                    null);
-
-            return CompletableFuture.completedFuture((Map.of(
-                    ReviewState.TEST_RESULT,
-                    result)));
-
+        public TestNode(LlmProvider provider, TestPromptBuilder promptBuilder, ObjectMapper mapper,
+                        ExecutorService specialistExecutor) {
+                this.provider = provider;
+                this.promptBuilder = promptBuilder;
+                this.mapper = mapper;
+                this.specialistExecutor = specialistExecutor;
         }
 
-        List<ChangedFile> changedTestFile = state
-                .changedFiles()
-                .stream()
-                .filter((changedFile) -> testFiles.stream()
-                        .anyMatch((file) -> file.getFilePath()
-                                .equals(changedFile.getFilePath())))
-                .toList();
+        @Override
+        public CompletableFuture<Map<String, Object>> apply(ReviewState state) {
 
-        LlmRequest request = promptBuilder.buildPrompt(state, changedTestFile);
+                List<FileClassification> testFiles = state
+                                .classifications()
+                                .stream()
+                                .filter((file) -> file.getCategory() == FileCategory.TEST)
+                                .toList();
 
-        return CompletableFuture
-                .supplyAsync(() -> provider.generate(request), specialistExecutor)
-                .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .handle((response, exception) -> {
+                log.info("Received Test files for Review Run Id {}", state.reviewRunId());
 
-                    if (exception != null) {
+                /**
+                 * No files classified for the Test Node by the supervisor
+                 */
+                if (testFiles.isEmpty()) {
+                        log.info("No Test files found for Review Run Id: {}. Skipping Test Agent",
+                                        state.reviewRunId());
 
-                        if (exception instanceof TimeoutException) {
+                        SpecialistResult result = new SpecialistResult(
+                                        AgentType.TEST,
+                                        SpecialistStatus.COMPLETED,
+                                        List.of(),
+                                        null);
 
-                            log.error("Test Node timeout for Review Run Id: {}",
-                                    state.reviewRunId());
+                        return CompletableFuture.completedFuture((Map.of(
+                                        ReviewState.TEST_RESULT,
+                                        result)));
 
-                            return new SpecialistResult(
-                                    AgentType.TEST,
-                                    SpecialistStatus.TIMEOUT,
-                                    List.of(),
-                                    "Test Node time out.");
+                }
+
+                List<ChangedFile> changedTestFile = state
+                                .changedFiles()
+                                .stream()
+                                .filter((changedFile) -> testFiles.stream()
+                                                .anyMatch((file) -> file.getFilePath()
+                                                                .equals(changedFile.getFilePath())))
+                                .toList();
+
+                LlmRequest request = promptBuilder.buildPrompt(state, changedTestFile);
+
+                return CompletableFuture
+                                .supplyAsync(() -> provider.generate(request), specialistExecutor)
+                                .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                                .handle((response, exception) -> {
+
+                                        if (exception != null) {
+
+                                                if (exception instanceof TimeoutException) {
+
+                                                        log.error("Test Node timeout for Review Run Id: {}",
+                                                                        state.reviewRunId());
+
+                                                        return new SpecialistResult(
+                                                                        AgentType.TEST,
+                                                                        SpecialistStatus.TIMEOUT,
+                                                                        List.of(),
+                                                                        "Test Node time out.");
+                                                }
+
+                                                log.error("Test Node failed for Review Run Id: {}",
+                                                                state.reviewRunId());
+
+                                                return new SpecialistResult(
+                                                                AgentType.TEST,
+                                                                SpecialistStatus.FAILED,
+                                                                List.of(),
+                                                                exception.getMessage());
+                                        }
+                                        /**
+                                         * LLM Call Succeeded
+                                         * parse the response
+                                         */
+
+                                        try {
+                                                List<AgentFinding> finding = parseResponse(response);
+
+                                                return new SpecialistResult(
+                                                                AgentType.TEST,
+                                                                SpecialistStatus.COMPLETED,
+                                                                finding,
+                                                                null);
+                                        } catch (Exception e) {
+
+                                                log.error("Failed to parse Llm Response for Review Run Id {}",
+                                                                state.reviewRunId());
+
+                                                return new SpecialistResult(
+                                                                AgentType.TEST,
+                                                                SpecialistStatus.FAILED,
+                                                                List.of(),
+                                                                "Failed to Parse Test Node Response" + e.getMessage());
+                                        }
+                                }).thenApply((result) -> Map.of(
+                                                ReviewState.TEST_RESULT,
+                                                result));
+        }
+
+        private List<AgentFinding> parseResponse(LlmResponse response) throws Exception {
+                if (response == null || response.getContent() == null || response.getContent().isBlank()) {
+                        throw new IllegalStateException("Llm returned invalid response");
+                }
+
+                SpecialistAnalysisResponse parsed = mapper.readValue(response.getContent(),
+                                SpecialistAnalysisResponse.class);
+
+                if (parsed.getFindings() == null || parsed.getFindings().isEmpty()) {
+                        return List.of();
+                }
+
+                List<AgentFinding> findings = parsed.getFindings();
+
+                for (AgentFinding finding : findings) {
+                        if (finding.getSeverity() == null) {
+                                log.warn("Finding '{}' missing severity, defaulting to MEDIUM", finding.getTitle());
+                                finding.setSeverity(Severity.MEDIUM);
                         }
+                }
 
-                        log.error("Test Node failed for Review Run Id: {}",
-                                state.reviewRunId());
+                findings.forEach((finding) -> finding.setAgentType(AgentType.TEST));
 
-                        return new SpecialistResult(
-                                AgentType.TEST,
-                                SpecialistStatus.FAILED,
-                                List.of(),
-                                exception.getMessage());
-                    }
-                    /**
-                     * LLM Call Succeeded
-                     * parse the response
-                     */
-
-                    try {
-                        List<AgentFinding> finding = parseResponse(response);
-
-                        return new SpecialistResult(
-                                AgentType.TEST,
-                                SpecialistStatus.COMPLETED,
-                                finding,
-                                null);
-                    } catch (Exception e) {
-
-                        log.error("Failed to parse Llm Response for Review Run Id {}",
-                                state.reviewRunId());
-
-                        return new SpecialistResult(
-                                AgentType.TEST,
-                                SpecialistStatus.FAILED,
-                                List.of(),
-                                "Failed to Parse Test Node Response" + e.getMessage());
-                    }
-                }).thenApply((result) -> Map.of(
-                        ReviewState.TEST_RESULT,
-                        result));
-    }
-
-    private List<AgentFinding> parseResponse(LlmResponse response) throws Exception {
-        if (response == null || response.getContent() == null || response.getContent().isBlank()) {
-            throw new IllegalStateException("Llm returned invalid response");
+                return findings;
         }
-
-        SpecialistAnalysisResponse parsed = mapper.readValue(response.getContent(),
-                SpecialistAnalysisResponse.class);
-
-        if (parsed.getFindings() == null || parsed.getFindings().isEmpty()) {
-            return List.of();
-        }
-        return parsed.getFindings();
-
-    }
 
 }

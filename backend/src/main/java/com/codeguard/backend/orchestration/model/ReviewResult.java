@@ -1,5 +1,6 @@
 package com.codeguard.backend.orchestration.model;
 
+import java.io.Serializable;
 import java.util.List;
 
 import lombok.AllArgsConstructor;
@@ -11,8 +12,9 @@ import lombok.Setter;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class ReviewResult {
+public class ReviewResult implements Serializable {
 
+    private static final long serialVersionUID = 1L;
     private List<AgentFinding> findings;
     private List<SpecialistResult> specialistResult;
     private ReviewStatus reviewStatus;
@@ -22,5 +24,13 @@ public class ReviewResult {
         COMPLETED,
         PARTIALLY_COMPLETED,
         FAILED
+    }
+
+    public static ReviewResult empty() {
+        return new ReviewResult(
+                List.of(),
+                List.of(),
+                null,
+                null);
     }
 }

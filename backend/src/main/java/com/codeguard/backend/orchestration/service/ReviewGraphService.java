@@ -15,6 +15,7 @@ import com.codeguard.backend.orchestration.model.FileClassification;
 import com.codeguard.backend.orchestration.model.ReviewResult;
 import com.codeguard.backend.orchestration.model.ReviewResult.ReviewStatus;
 import com.codeguard.backend.orchestration.state.ReviewState;
+import com.codeguard.backend.service.ReviewPersistenceService;
 
 @Service
 public class ReviewGraphService {
@@ -22,9 +23,11 @@ public class ReviewGraphService {
     private static final Logger log = LoggerFactory.getLogger(ReviewGraphService.class);
 
     private final CompiledGraph<ReviewState> compiledGraph;
+    private final ReviewPersistenceService persistenceService;
 
-    ReviewGraphService(CompiledGraph<ReviewState> compiledGraph) {
+    ReviewGraphService(CompiledGraph<ReviewState> compiledGraph, ReviewPersistenceService persistenceService) {
         this.compiledGraph = compiledGraph;
+        this.persistenceService = persistenceService;
     }
 
     public ReviewResult startReview(ReviewRun reviewRun, List<ChangedFile> changedFiles) {
@@ -41,12 +44,27 @@ public class ReviewGraphService {
                 ReviewState.CHANGED_FILES, changedFiles);
 
         /**
-         * Here the Supervisor Node is called to send the llm request.
-         * Classification of the files
+         * Execute the complete review graph:
+         *
+         * Supervisor
+         * ↓
+         * Four parallel specialist agents
+         * ↓
+         * Aggregator
+         *
+         * The final state contains the aggregated ReviewResult.
          */
+
         ReviewState finalState = compiledGraph
                 .invoke(inti)
                 .orElseThrow(() -> new IllegalStateException("Graph execution returned final State"));
+
+        for (FileClassification classification : finalState.classifications()) {
+
+            log.info(" {} -> {}",
+                    classification.getFilePath(),
+                    classification.getCategory());
+        }
 
         ReviewResult reviewResult = finalState.aggregatedResult();
 
@@ -62,24 +80,17 @@ public class ReviewGraphService {
 
         List<AgentFinding> agentFindings = reviewResult.getFindings();
 
-        for (FileClassification classification : finalState.classifications()) {
-
-            log.info(" {} -> {}",
-                    classification.getFilePath(),
-                    classification.getCategory());
-        }
-
-        log.info("Review Run {} completed with status {} and {} findings. Summary{}",
+        log.info("Review Run {} completed with status {} and {} findings. Summary: {}",
                 finalState.reviewRunId(),
                 status,
                 agentFindings.size(),
                 summary);
+
+        persistenceService.persist(reviewRun.getReviewRunId(), reviewResult);
+
         return reviewResult;
-        // phase 4:
-        //
-        // persist classification
-        // dispatch Speacialist agents
-        // update ReviewRun Status
+
+        // Graph execution and aggregated result persistence are complete.
 
     }
 }

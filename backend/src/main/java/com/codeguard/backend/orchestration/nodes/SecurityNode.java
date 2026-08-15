@@ -16,6 +16,7 @@ import com.codeguard.backend.llm.LlmProvider;
 import com.codeguard.backend.llm.LlmRequest;
 import com.codeguard.backend.llm.LlmResponse;
 import com.codeguard.backend.enums.AgentType;
+import com.codeguard.backend.enums.Severity;
 import com.codeguard.backend.orchestration.dto.SpecialistAnalysisResponse;
 import com.codeguard.backend.orchestration.model.AgentFinding;
 import com.codeguard.backend.orchestration.model.ChangedFile;
@@ -179,6 +180,18 @@ public class SecurityNode implements AsyncNodeAction<ReviewState> {
                 if (parsed.getFindings() == null) {
                         return List.of();
                 }
+
+                List<AgentFinding> findings = parsed.getFindings();
+
+                for (AgentFinding finding : findings) {
+
+                        if (finding.getSeverity() == null) {
+                                log.warn("Finding '{}' missing severity, defaulting to CRITICAL", finding.getTitle());
+                                finding.setSeverity(Severity.CRITICAL);
+                        }
+                }
+
+                findings.forEach((finding) -> finding.setAgentType(AgentType.SECURITY));
 
                 return parsed.getFindings();
         }

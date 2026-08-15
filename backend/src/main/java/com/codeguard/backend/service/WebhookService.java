@@ -207,14 +207,21 @@ public class WebhookService {
                         "Skipping ReviewRun {} because no changed files were found.",
                         reviewRun.getReviewRunId());
 
-                // Todo (Phase 4):
-                // reviewRunService.markCompleted(reviewRun);
-
                 return;
             }
-            /**
-             * Triggering the Supervisor Node
+            /*
+             * Execute the complete review graph:
+             *
+             * Supervisor
+             * ↓
+             * Four parallel specialist agents
+             * ↓
+             * Aggregator
+             *
+             * The final ReviewResult contains the aggregated findings,
+             * specialist execution results, review status and summary.
              */
+
             ReviewResult reviewResult = reviewGraphService.startReview(
                     reviewRun,
                     changedFiles);
@@ -227,11 +234,8 @@ public class WebhookService {
                         "Review Graph failed for ReviewRun {}. Reason: {}",
                         reviewRun.getReviewRunId(),
                         reviewResult.getSummary());
-
-                // Todo (Phase 4):
-                // reviewRunService.markFailed(reviewRun, finalState.failureReason());
-
                 return;
+
             } else if (reviewStatus == ReviewStatus.PARTIALLY_COMPLETED) {
 
                 log.warn(
@@ -239,6 +243,7 @@ public class WebhookService {
                         reviewRun.getReviewRunId(),
                         reviewResult.getSummary());
                 return;
+
             } else {
 
                 log.info(
@@ -247,9 +252,6 @@ public class WebhookService {
                         reviewResult.getFindings().size());
             }
 
-            // Todo (Phase 4):
-            // reviewRunService.markCompleted(reviewRun);
-
         } catch (Exception e) {
 
             log.error(
@@ -257,6 +259,7 @@ public class WebhookService {
                     reviewRun.getReviewRunId(),
                     e);
 
+            reviewRunService.markFailed(reviewRun);
             // Todo (Phase 4):
             // reviewRunService.markFailed(reviewRun, e.getMessage());
         }

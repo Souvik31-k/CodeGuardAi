@@ -19,6 +19,9 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+
+import com.codeguard.backend.enums.AgentType;
+import com.codeguard.backend.enums.Severity;
 import com.fasterxml.jackson.databind.JsonNode;
 
 @Entity
@@ -27,20 +30,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Findings {
-
-    public enum AgentType {
-        SECURITY,
-        QUALITY,
-        DOCUMENTATION,
-        TEST
-    }
-
-    public enum Severity {
-        CRITICAL,
-        HIGH,
-        MEDIUM,
-        LOW
-    }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

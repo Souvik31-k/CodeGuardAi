@@ -42,6 +42,7 @@ public class SecurityPromptBuilder {
         {
           "findings": [
             {
+              "agentType":SECURITY,
               "severity": "HIGH",
               "title": "...",
               "filePath": "...",

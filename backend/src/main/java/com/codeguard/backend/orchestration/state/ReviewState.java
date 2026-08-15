@@ -7,6 +7,7 @@ import org.bsc.langgraph4j.state.AgentState;
 import org.bsc.langgraph4j.state.Channel;
 import org.bsc.langgraph4j.state.Channels;
 
+import com.codeguard.backend.enums.AgentType;
 import com.codeguard.backend.orchestration.model.ChangedFile;
 import com.codeguard.backend.orchestration.model.FileClassification;
 import com.codeguard.backend.orchestration.model.ReviewResult;
@@ -26,7 +27,7 @@ public class ReviewState extends AgentState {
 
     public static final String DOCUMENTATION_RESULT = "documentationResult";
     public static final String TEST_RESULT = "testResult";
-    public static final String SECURITY_RESULT = "securiytResult";
+    public static final String SECURITY_RESULT = "securityResult";
     public static final String QUALITY_RESULT = "qualityResult";
 
     public static final String AGGREGATED_RESULT = "aggregatedResult";
@@ -46,15 +47,34 @@ public class ReviewState extends AgentState {
 
             Map.entry(FAILURE_REASON, Channels.<String>base(() -> "")),
 
-            Map.entry(DOCUMENTATION_RESULT, Channels.<SpecialistResult>base(() -> null)),
+            Map.entry(
+                    DOCUMENTATION_RESULT,
+                    Channels.<SpecialistResult>base(
+                            () -> SpecialistResult.notExecuted(
+                                    AgentType.DOCUMENTATION))),
 
-            Map.entry(SECURITY_RESULT, Channels.<SpecialistResult>base(() -> null)),
+            Map.entry(
+                    SECURITY_RESULT,
+                    Channels.<SpecialistResult>base(
+                            () -> SpecialistResult.notExecuted(
+                                    AgentType.SECURITY))),
 
-            Map.entry(TEST_RESULT, Channels.<SpecialistResult>base(() -> null)),
+            Map.entry(
+                    TEST_RESULT,
+                    Channels.<SpecialistResult>base(
+                            () -> SpecialistResult.notExecuted(
+                                    AgentType.TEST))),
 
-            Map.entry(QUALITY_RESULT, Channels.<SpecialistResult>base(() -> null)),
+            Map.entry(
+                    QUALITY_RESULT,
+                    Channels.<SpecialistResult>base(
+                            () -> SpecialistResult.notExecuted(
+                                    AgentType.QUALITY))),
 
-            Map.entry(AGGREGATED_RESULT, Channels.<ReviewResult>base(() -> null)));
+            Map.entry(
+                    AGGREGATED_RESULT,
+                    Channels.<ReviewResult>base(
+                            () -> ReviewResult.empty())));
 
     public enum ClassificationStatus {
         PENDING,
