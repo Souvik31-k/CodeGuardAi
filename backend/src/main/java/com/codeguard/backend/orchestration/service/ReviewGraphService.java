@@ -9,8 +9,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.codeguard.backend.model.ReviewRun;
+import com.codeguard.backend.orchestration.model.AgentFinding;
 import com.codeguard.backend.orchestration.model.ChangedFile;
 import com.codeguard.backend.orchestration.model.FileClassification;
+import com.codeguard.backend.orchestration.model.ReviewResult;
+import com.codeguard.backend.orchestration.model.ReviewResult.ReviewStatus;
 import com.codeguard.backend.orchestration.state.ReviewState;
 
 @Service
@@ -24,7 +27,7 @@ public class ReviewGraphService {
         this.compiledGraph = compiledGraph;
     }
 
-    public ReviewState startReview(ReviewRun reviewRun, List<ChangedFile> changedFiles) {
+    public ReviewResult startReview(ReviewRun reviewRun, List<ChangedFile> changedFiles) {
 
         /**
          * Creating an initial ReviewState
@@ -43,7 +46,21 @@ public class ReviewGraphService {
          */
         ReviewState finalState = compiledGraph
                 .invoke(inti)
-                .orElseThrow(() -> new IllegalStateException("Graph execution returned no state"));
+                .orElseThrow(() -> new IllegalStateException("Graph execution returned final State"));
+
+        ReviewResult reviewResult = finalState.aggregatedResult();
+
+        if (reviewResult == null) {
+
+            throw new IllegalStateException("Review Graph completed without an aggregated result.");
+
+        }
+
+        String summary = reviewResult.getSummary();
+
+        ReviewStatus status = reviewResult.getReviewStatus();
+
+        List<AgentFinding> agentFindings = reviewResult.getFindings();
 
         for (FileClassification classification : finalState.classifications()) {
 
@@ -51,7 +68,13 @@ public class ReviewGraphService {
                     classification.getFilePath(),
                     classification.getCategory());
         }
-        return finalState;
+
+        log.info("Review Run {} completed with status {} and {} findings. Summary{}",
+                finalState.reviewRunId(),
+                status,
+                agentFindings.size(),
+                summary);
+        return reviewResult;
         // phase 4:
         //
         // persist classification
