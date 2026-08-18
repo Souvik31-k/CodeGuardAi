@@ -1,7 +1,6 @@
 package com.codeguard.backend.orchestration.prompt;
 
 import java.util.List;
-import java.util.StringJoiner;
 
 import org.springframework.stereotype.Component;
 
@@ -42,7 +41,7 @@ public class SecurityPromptBuilder {
         {
           "findings": [
             {
-              "agentType":SECURITY,
+              "agentType": "SECURITY",
               "severity": "HIGH",
               "title": "...",
               "filePath": "...",
@@ -70,20 +69,7 @@ public class SecurityPromptBuilder {
 
         """;
 
-    StringJoiner files = new StringJoiner("\n\n");
-    for (ChangedFile file : securityFiles) {
-      files.add("""
-          File:
-          %s
-
-          Patch:
-          %s
-          """.formatted(
-          file.getFilePath(),
-          file.getPatch() == null
-              ? "(No file patch available)"
-              : file.getPatch()));
-    }
+    String files = PromptPatchLimiter.buildChangedFiles(securityFiles);
 
     String userPrompt = """
         Review Run Id: %d

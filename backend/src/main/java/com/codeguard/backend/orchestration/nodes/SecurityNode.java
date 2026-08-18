@@ -1,5 +1,6 @@
 package com.codeguard.backend.orchestration.nodes;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -17,6 +18,7 @@ import com.codeguard.backend.llm.LlmRequest;
 import com.codeguard.backend.llm.LlmResponse;
 import com.codeguard.backend.enums.AgentType;
 import com.codeguard.backend.enums.Severity;
+import com.codeguard.backend.orchestration.batching.SpecialistBatcher;
 import com.codeguard.backend.orchestration.dto.SpecialistAnalysisResponse;
 import com.codeguard.backend.orchestration.model.AgentFinding;
 import com.codeguard.backend.orchestration.model.ChangedFile;
@@ -31,7 +33,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Component
 public class SecurityNode implements AsyncNodeAction<ReviewState> {
         private static final Logger log = LoggerFactory.getLogger(SecurityNode.class);
-        private static final long TIMEOUT_SECONDS = 10;
+        private static final long TIMEOUT_SECONDS = 90;
+        private static final int MAX_BATCH_CHARS = 10000;
 
         private final SecurityPromptBuilder promptBuilder;
         private final LlmProvider provider;
@@ -84,13 +87,73 @@ public class SecurityNode implements AsyncNodeAction<ReviewState> {
                                                 .anyMatch(classification -> classification.getFilePath()
                                                                 .equals(changedFile.getFilePath())))
                                 .toList();
+                /*
+                 * Split the changed files into size-bounded batch.
+                 */
+                List<List<ChangedFile>> batched = SpecialistBatcher.batch(changedFiles, MAX_BATCH_CHARS);
 
-                LlmRequest request = promptBuilder.buildPrompt(state, changedFiles);
+                log.info(
+                                "Security Node created {} batched for {} files "
+                                                + "for Review Run {}",
+                                batched.size(),
+                                changedFiles.size(),
+                                state.reviewRunId());
 
+                /*
+                 * Execute the batches sequentially
+                 */
                 return CompletableFuture
-                                .supplyAsync(() -> provider.generate(request), specialistExecutor)
+                                .supplyAsync(() -> {
+
+                                        List<AgentFinding> allFindings = new ArrayList<>();
+
+                                        for (int i = 0; i < batched.size(); i++) {
+
+                                                List<ChangedFile> batch = batched.get(i);
+
+                                                log.info(
+                                                                "Processing Security Node for batch {}/{}"
+                                                                                + " with {} files for Review Run {}",
+                                                                i + 1,
+                                                                batched.size(),
+                                                                batch.size(),
+                                                                state.reviewRunId());
+
+                                                LlmRequest request = promptBuilder.buildPrompt(state, batch);
+
+                                                LlmResponse response = provider.generate(request);
+
+                                                try {
+                                                        List<AgentFinding> findings = parseResponse(response);
+
+                                                        allFindings.addAll(findings);
+
+                                                        log.info(
+                                                                        "Security batch {}/{} completed "
+                                                                                        + "with {} findings",
+                                                                        i + 1,
+                                                                        batched.size(),
+                                                                        findings.size());
+
+                                                } catch (Exception e) {
+                                                        throw new IllegalStateException(
+                                                                        "Failed to parse Security batch"
+                                                                                        + (i + 1)
+                                                                                        + "/"
+                                                                                        + batched.size(),
+                                                                        e);
+                                                }
+                                        }
+
+                                        return new SpecialistResult(
+                                                        AgentType.SECURITY,
+                                                        SpecialistStatus.COMPLETED,
+                                                        allFindings,
+                                                        null);
+
+                                }, specialistExecutor)
                                 .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                                .handle((response, exception) -> {
+                                .handle((result, exception) -> {
 
                                         /*
                                          * LLM call failed or timed out.
@@ -122,39 +185,14 @@ public class SecurityNode implements AsyncNodeAction<ReviewState> {
                                                                 exception.getMessage());
                                         }
 
-                                        /*
-                                         * LLM call succeeded.
-                                         * Now parse the response.
-                                         */
-                                        try {
+                                        log.info(
+                                                        "Quality Node completed for Review Run {} "
+                                                                        + "with {} findings",
+                                                        state.reviewRunId(),
+                                                        result.getFindings().size());
 
-                                                List<AgentFinding> findings = parseResponse(response);
+                                        return result;
 
-                                                log.info(
-                                                                "SecurityNode completed for ReviewRun {}. {} findings.",
-                                                                state.reviewRunId(),
-                                                                findings.size());
-
-                                                return new SpecialistResult(
-                                                                AgentType.SECURITY,
-                                                                SpecialistStatus.COMPLETED,
-                                                                findings,
-                                                                null);
-
-                                        } catch (Exception e) {
-
-                                                log.error(
-                                                                "Failed to parse Security Agent response for ReviewRun {}",
-                                                                state.reviewRunId(),
-                                                                e);
-
-                                                return new SpecialistResult(
-                                                                AgentType.SECURITY,
-                                                                SpecialistStatus.FAILED,
-                                                                List.of(),
-                                                                "Failed to parse Security Agent response: "
-                                                                                + e.getMessage());
-                                        }
                                 })
 
                                 /*

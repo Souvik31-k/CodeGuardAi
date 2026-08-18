@@ -1,5 +1,6 @@
 package com.codeguard.backend.orchestration.nodes;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -17,6 +18,7 @@ import com.codeguard.backend.enums.Severity;
 import com.codeguard.backend.llm.LlmProvider;
 import com.codeguard.backend.llm.LlmRequest;
 import com.codeguard.backend.llm.LlmResponse;
+import com.codeguard.backend.orchestration.batching.SpecialistBatcher;
 import com.codeguard.backend.orchestration.dto.SpecialistAnalysisResponse;
 import com.codeguard.backend.orchestration.model.AgentFinding;
 import com.codeguard.backend.orchestration.model.ChangedFile;
@@ -32,7 +34,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class TestNode implements AsyncNodeAction<ReviewState> {
 
         private static final Logger log = LoggerFactory.getLogger(TestNode.class);
-        private static final long TIMEOUT_SECONDS = 10;
+        private static final long TIMEOUT_SECONDS = 90;
+        private static final int MAX_BATCH_CHARS = 10000;
 
         private final TestPromptBuilder promptBuilder;
         private final ObjectMapper mapper;
@@ -85,12 +88,73 @@ public class TestNode implements AsyncNodeAction<ReviewState> {
                                                                 .equals(changedFile.getFilePath())))
                                 .toList();
 
-                LlmRequest request = promptBuilder.buildPrompt(state, changedTestFile);
+                /*
+                 * Split the changed files into size-bounded batch.
+                 */
+                List<List<ChangedFile>> batched = SpecialistBatcher.batch(changedTestFile, MAX_BATCH_CHARS);
+
+                log.info(
+                                "Test Node created {} batches for {} files"
+                                                + " for Review Run Id {}",
+                                batched.size(),
+                                changedTestFile.size(),
+                                state.reviewRunId());
+                /*
+                 * Execute batches sequentially.
+                 */
 
                 return CompletableFuture
-                                .supplyAsync(() -> provider.generate(request), specialistExecutor)
+                                .supplyAsync(() -> {
+
+                                        List<AgentFinding> allFindings = new ArrayList<>();
+
+                                        for (int i = 0; i < batched.size(); i++) {
+
+                                                List<ChangedFile> batch = batched.get(i);
+
+                                                log.info(
+                                                                "Processing Test batch {}/{} "
+                                                                                + "with {} files for Review Run {}",
+                                                                i + 1,
+                                                                batched.size(),
+                                                                batch.size(),
+                                                                state.reviewRunId());
+
+                                                LlmRequest request = promptBuilder.buildPrompt(state, batch);
+
+                                                LlmResponse response = provider.generate(request);
+
+                                                try {
+                                                        List<AgentFinding> findings = parseResponse(response);
+
+                                                        allFindings.addAll(findings);
+
+                                                        log.info(
+                                                                        "Test batch {}/{} completed "
+                                                                                        + "with {} findings",
+                                                                        i + 1,
+                                                                        batched.size(),
+                                                                        findings.size());
+
+                                                } catch (Exception e) {
+                                                        throw new IllegalStateException(
+                                                                        "Failed to parse Test batch "
+                                                                                        + (i + 1)
+                                                                                        + "/"
+                                                                                        + batched.size(),
+                                                                        e);
+                                                }
+                                        }
+
+                                        return new SpecialistResult(
+                                                        AgentType.TEST,
+                                                        SpecialistStatus.COMPLETED,
+                                                        allFindings,
+                                                        null);
+
+                                }, specialistExecutor)
                                 .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                                .handle((response, exception) -> {
+                                .handle((result, exception) -> {
 
                                         if (exception != null) {
 
@@ -115,30 +179,14 @@ public class TestNode implements AsyncNodeAction<ReviewState> {
                                                                 List.of(),
                                                                 exception.getMessage());
                                         }
-                                        /**
-                                         * LLM Call Succeeded
-                                         * parse the response
-                                         */
 
-                                        try {
-                                                List<AgentFinding> finding = parseResponse(response);
+                                        log.info(
+                                                        "Test node completed for Review Run {} "
+                                                                        + "with {} findings",
+                                                        state.reviewRunId(),
+                                                        result.getFindings().size());
+                                        return result;
 
-                                                return new SpecialistResult(
-                                                                AgentType.TEST,
-                                                                SpecialistStatus.COMPLETED,
-                                                                finding,
-                                                                null);
-                                        } catch (Exception e) {
-
-                                                log.error("Failed to parse Llm Response for Review Run Id {}",
-                                                                state.reviewRunId());
-
-                                                return new SpecialistResult(
-                                                                AgentType.TEST,
-                                                                SpecialistStatus.FAILED,
-                                                                List.of(),
-                                                                "Failed to Parse Test Node Response" + e.getMessage());
-                                        }
                                 }).thenApply((result) -> Map.of(
                                                 ReviewState.TEST_RESULT,
                                                 result));

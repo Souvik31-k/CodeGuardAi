@@ -1,7 +1,6 @@
 package com.codeguard.backend.orchestration.prompt;
 
 import java.util.List;
-import java.util.StringJoiner;
 
 import org.springframework.stereotype.Component;
 
@@ -66,25 +65,7 @@ public class DocumentPromptBuilder {
         """;
     ;
 
-    StringJoiner files = new StringJoiner("\n\n");
-
-    for (ChangedFile file : documentFiles) {
-      files.add("""
-          =======================================
-
-
-          File:
-          %s
-
-
-          Patch:
-          %s
-          """.formatted(
-          file.getFilePath(),
-          file.getPatch() == null
-              ? "(No File Patch Available)"
-              : file.getPatch()));
-    }
+    String files = PromptPatchLimiter.buildChangedFiles(documentFiles);
 
     String userPrompt = """
         Review Run Id:

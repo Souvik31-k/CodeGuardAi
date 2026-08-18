@@ -1,7 +1,6 @@
 package com.codeguard.backend.orchestration.prompt;
 
 import java.util.List;
-import java.util.StringJoiner;
 
 import org.springframework.stereotype.Component;
 
@@ -62,16 +61,12 @@ public class TestPromptBuilder {
         LOW:
         A minor testing improvement or maintainability issue.
 
-        Return ONLY valid JSON.
-        Do not use Markdown code fences.
-        Do not include explanations outside the JSON.
-
         Response format:
 
         {
           "findings": [
             {
-              "agentType": TEST
+              "agentType": "TEST",
               "severity": "MEDIUM",
               "title": "Missing edge-case test",
               "filePath": "src/test/java/example/UserServiceTest.java",
@@ -95,19 +90,7 @@ public class TestPromptBuilder {
         CRITICAL, HIGH, MEDIUM, LOW
         """;
 
-    StringJoiner files = new StringJoiner("\n\n");
-
-    for (ChangedFile file : testFiles) {
-      files.add("""
-          File :
-          %s
-
-          Patch:
-          %s
-          """.formatted(
-          file.getFilePath(),
-          file.getPatch() == null ? "(No File patch available)" : file.getPatch()));
-    }
+    String files = PromptPatchLimiter.buildChangedFiles(testFiles);
 
     String userPrompt = """
         Review Run Id: %d

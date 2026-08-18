@@ -44,9 +44,9 @@ public class RestClientConfig {
 			@Qualifier("groqConnectionManager") PoolingHttpClientConnectionManager connectionManager) {
 
 		RequestConfig requestConfig = RequestConfig.custom()
-				.setConnectionRequestTimeout(Timeout.ofSeconds(1)) // How long to wait for a connection
+				.setConnectionRequestTimeout(Timeout.ofSeconds(3)) // How long a request to wait for a connection
 																	// from the pool
-				.setResponseTimeout(Timeout.ofSeconds(6)) // How long to wait for the llm provider
+				.setResponseTimeout(Timeout.ofSeconds(60)) // How long to wait for the llm provider
 															// response
 				.build();
 
