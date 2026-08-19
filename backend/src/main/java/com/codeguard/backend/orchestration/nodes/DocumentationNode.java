@@ -34,197 +34,197 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Component
 public class DocumentationNode implements AsyncNodeAction<ReviewState> {
 
-    private static final Logger log = LoggerFactory.getLogger(DocumentationNode.class);
-    private static final long TIMEOUT_SECONDS = 90;
-    private static final int MAX_BATCH_CHARS = 10000;
+        private static final Logger log = LoggerFactory.getLogger(DocumentationNode.class);
+        private static final long TIMEOUT_SECONDS = 300;
+        private static final int MAX_BATCH_CHARS = 10000;
 
-    private final DocumentPromptBuilder promptBuilder;
-    private final ObjectMapper mapper;
-    private final LlmProvider provider;
-    private final ExecutorService specialistExecutor;
+        private final DocumentPromptBuilder promptBuilder;
+        private final ObjectMapper mapper;
+        private final LlmProvider provider;
+        private final ExecutorService specialistExecutor;
 
-    public DocumentationNode(DocumentPromptBuilder promptBuilder, ObjectMapper mapper, LlmProvider provider,
-            ExecutorService specialistExecutor) {
-        this.promptBuilder = promptBuilder;
-        this.mapper = mapper;
-        this.provider = provider;
-        this.specialistExecutor = specialistExecutor;
-    }
-
-    @Override
-    public CompletableFuture<Map<String, Object>> apply(ReviewState state) {
-        List<FileClassification> documentationFiles = state.classifications()
-                .stream()
-                .filter((classification) -> classification
-                        .getCategory() == FileCategory.DOCUMENTATION)
-                .toList();
-
-        log.info("Recieved Documentation files {} for Review Run Id {}", documentationFiles,
-                state.reviewRunId());
-
-        /**
-         * No files classified for the Documentation Node by the supervisor
-         */
-        if (documentationFiles.isEmpty()) {
-            log.info("No Document files found for Review Run Id: {}. Skipping Documentation Agent",
-                    state.reviewRunId());
-
-            SpecialistResult result = new SpecialistResult(
-                    AgentType.DOCUMENTATION,
-                    SpecialistStatus.COMPLETED,
-                    List.of(),
-                    null);
-
-            return CompletableFuture.completedFuture((Map.of(
-                    ReviewState.DOCUMENTATION_RESULT,
-                    result)));
-
+        public DocumentationNode(DocumentPromptBuilder promptBuilder, ObjectMapper mapper, LlmProvider provider,
+                        ExecutorService specialistExecutor) {
+                this.promptBuilder = promptBuilder;
+                this.mapper = mapper;
+                this.provider = provider;
+                this.specialistExecutor = specialistExecutor;
         }
 
-        List<ChangedFile> changedDocFiles = state.changedFiles()
-                .stream()
-                .filter((changedFile) -> documentationFiles.stream()
-                        .anyMatch((classification) -> classification.getFilePath()
-                                .equals(changedFile.getFilePath())))
-                .toList();
+        @Override
+        public CompletableFuture<Map<String, Object>> apply(ReviewState state) {
+                List<FileClassification> documentationFiles = state.classifications()
+                                .stream()
+                                .filter((classification) -> classification
+                                                .getCategory() == FileCategory.DOCUMENTATION)
+                                .toList();
 
-        /*
-         * Split the files into size bounded batches
-         */
-        List<List<ChangedFile>> batched = SpecialistBatcher.batch(changedDocFiles, MAX_BATCH_CHARS);
-
-        log.info(
-                "Documentation Node created {} batched for {} files"
-                        + "for Review Run {}",
-                batched.size(),
-                changedDocFiles.size(),
-                state.reviewRunId());
-
-        /*
-         * Execute batches sequentially.
-         */
-        return CompletableFuture
-                .supplyAsync(() -> {
-
-                    List<AgentFinding> allFindings = new ArrayList<>();
-
-                    for (int i = 0; i < batched.size(); i++) {
-
-                        List<ChangedFile> batch = batched.get(i);
-
-                        log.info(
-                                "Processing Documetation batch {}/{} "
-                                        + "with {} files for Review Run {}.",
-                                i + 1,
-                                batched.size(),
-                                batch.size(),
+                log.info("Recieved Documentation files {} for Review Run Id {}", documentationFiles,
                                 state.reviewRunId());
 
-                        LlmRequest request = promptBuilder.buildPrompt(state, batch);
+                /**
+                 * No files classified for the Documentation Node by the supervisor
+                 */
+                if (documentationFiles.isEmpty()) {
+                        log.info("No Document files found for Review Run Id: {}. Skipping Documentation Agent",
+                                        state.reviewRunId());
 
-                        LlmResponse response = provider.generate(request);
-                        try {
+                        SpecialistResult result = new SpecialistResult(
+                                        AgentType.DOCUMENTATION,
+                                        SpecialistStatus.COMPLETED,
+                                        List.of(),
+                                        null);
 
-                            List<AgentFinding> findings = parseRespose(response);
+                        return CompletableFuture.completedFuture((Map.of(
+                                        ReviewState.DOCUMENTATION_RESULT,
+                                        result)));
 
-                            allFindings.addAll(findings);
+                }
 
-                            log.info(
-                                    "Quality batch {}/{} completed "
-                                            + "with {} findings",
-                                    i + 1,
-                                    batched.size(),
-                                    findings.size());
+                List<ChangedFile> changedDocFiles = state.changedFiles()
+                                .stream()
+                                .filter((changedFile) -> documentationFiles.stream()
+                                                .anyMatch((classification) -> classification.getFilePath()
+                                                                .equals(changedFile.getFilePath())))
+                                .toList();
 
-                        } catch (Exception e) {
-                            throw new IllegalStateException(
-                                    "Failed to parse Quality batch "
-                                            + (i + 1)
-                                            + "/"
-                                            + batched.size(),
-                                    e);
+                /*
+                 * Split the files into size bounded batches
+                 */
+                List<List<ChangedFile>> batched = SpecialistBatcher.batch(changedDocFiles, MAX_BATCH_CHARS);
+
+                log.info(
+                                "Documentation Node created {} batched for {} files"
+                                                + "for Review Run {}",
+                                batched.size(),
+                                changedDocFiles.size(),
+                                state.reviewRunId());
+
+                /*
+                 * Execute batches sequentially.
+                 */
+                return CompletableFuture
+                                .supplyAsync(() -> {
+
+                                        List<AgentFinding> allFindings = new ArrayList<>();
+
+                                        for (int i = 0; i < batched.size(); i++) {
+
+                                                List<ChangedFile> batch = batched.get(i);
+
+                                                log.info(
+                                                                "Processing Documetation batch {}/{} "
+                                                                                + "with {} files for Review Run {}.",
+                                                                i + 1,
+                                                                batched.size(),
+                                                                batch.size(),
+                                                                state.reviewRunId());
+
+                                                LlmRequest request = promptBuilder.buildPrompt(state, batch);
+
+                                                LlmResponse response = provider.generate(request);
+                                                try {
+
+                                                        List<AgentFinding> findings = parseRespose(response);
+
+                                                        allFindings.addAll(findings);
+
+                                                        log.info(
+                                                                        "Quality batch {}/{} completed "
+                                                                                        + "with {} findings",
+                                                                        i + 1,
+                                                                        batched.size(),
+                                                                        findings.size());
+
+                                                } catch (Exception e) {
+                                                        throw new IllegalStateException(
+                                                                        "Failed to parse Quality batch "
+                                                                                        + (i + 1)
+                                                                                        + "/"
+                                                                                        + batched.size(),
+                                                                        e);
+                                                }
+
+                                        }
+
+                                        return new SpecialistResult(
+                                                        AgentType.DOCUMENTATION,
+                                                        SpecialistStatus.COMPLETED,
+                                                        allFindings,
+                                                        null);
+
+                                }, specialistExecutor)
+                                .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
+                                .handle((result, exception) -> {
+
+                                        /**
+                                         * Llm call failed or timeout
+                                         */
+
+                                        if (exception != null) {
+
+                                                if (exception instanceof TimeoutException) {
+
+                                                        log.error("Document Node time out for Review Run Id {}",
+                                                                        state.reviewRunId());
+
+                                                        return new SpecialistResult(
+                                                                        AgentType.DOCUMENTATION,
+                                                                        SpecialistStatus.TIMEOUT,
+                                                                        List.of(),
+                                                                        "Document Node time out.");
+                                                }
+
+                                                log.error("Document Node Failed to generate Response for Review Run Id {}",
+                                                                state.reviewRunId(), exception);
+
+                                                return new SpecialistResult(
+                                                                AgentType.DOCUMENTATION,
+                                                                SpecialistStatus.FAILED,
+                                                                List.of(),
+                                                                exception.getMessage());
+                                        }
+
+                                        log.info(
+                                                        "Documentation Node completed for Review Run {} "
+                                                                        + "with {}findinds.",
+                                                        state.reviewRunId(),
+                                                        result.getFindings().size());
+
+                                        return result;
+
+                                }).thenApply((result) -> Map.of(
+                                                ReviewState.DOCUMENTATION_RESULT,
+                                                result));
+        }
+
+        /**
+         * Parsing the LLM response content to Agent Finding type
+         */
+        private List<AgentFinding> parseRespose(LlmResponse response) throws Exception {
+                if (response == null || response.getContent() == null || response.getContent().isBlank()) {
+                        throw new IllegalStateException("Llm returned invalid response, cannot be parsed.");
+                }
+                SpecialistAnalysisResponse parsed = mapper.readValue(response.getContent(),
+                                SpecialistAnalysisResponse.class);
+
+                if (parsed.getFindings() == null || parsed.getFindings().isEmpty()) {
+                        return List.of();
+                }
+
+                List<AgentFinding> findings = parsed.getFindings();
+
+                for (AgentFinding finding : findings) {
+                        if (finding.getSeverity() == null) {
+                                log.warn("Finding '{}' missing severity, defaulting to LOW", finding.getTitle());
+                                finding.setSeverity(Severity.LOW);
                         }
+                }
 
-                    }
+                findings.forEach((finding) -> finding.setAgentType(AgentType.DOCUMENTATION));
 
-                    return new SpecialistResult(
-                            AgentType.DOCUMENTATION,
-                            SpecialistStatus.COMPLETED,
-                            allFindings,
-                            null);
-
-                }, specialistExecutor)
-                .orTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
-                .handle((result, exception) -> {
-
-                    /**
-                     * Llm call failed or timeout
-                     */
-
-                    if (exception != null) {
-
-                        if (exception instanceof TimeoutException) {
-
-                            log.error("Document Node time out for Review Run Id {}",
-                                    state.reviewRunId());
-
-                            return new SpecialistResult(
-                                    AgentType.DOCUMENTATION,
-                                    SpecialistStatus.TIMEOUT,
-                                    List.of(),
-                                    "Document Node time out.");
-                        }
-
-                        log.error("Document Node Failed to generate Response for Review Run Id {}",
-                                state.reviewRunId(), exception);
-
-                        return new SpecialistResult(
-                                AgentType.DOCUMENTATION,
-                                SpecialistStatus.FAILED,
-                                List.of(),
-                                exception.getMessage());
-                    }
-
-                    log.info(
-                            "Documentation Node completed for Review Run {} "
-                                    + "with {}findinds.",
-                            state.reviewRunId(),
-                            result.getFindings().size());
-
-                    return result;
-
-                }).thenApply((result) -> Map.of(
-                        ReviewState.DOCUMENTATION_RESULT,
-                        result));
-    }
-
-    /**
-     * Parsing the LLM response content to Agent Finding type
-     */
-    private List<AgentFinding> parseRespose(LlmResponse response) throws Exception {
-        if (response == null || response.getContent() == null || response.getContent().isBlank()) {
-            throw new IllegalStateException("Llm returned invalid response, cannot be parsed.");
+                return findings;
         }
-        SpecialistAnalysisResponse parsed = mapper.readValue(response.getContent(),
-                SpecialistAnalysisResponse.class);
-
-        if (parsed.getFindings() == null || parsed.getFindings().isEmpty()) {
-            return List.of();
-        }
-
-        List<AgentFinding> findings = parsed.getFindings();
-
-        for (AgentFinding finding : findings) {
-            if (finding.getSeverity() == null) {
-                log.warn("Finding '{}' missing severity, defaulting to LOW", finding.getTitle());
-                finding.setSeverity(Severity.LOW);
-            }
-        }
-
-        findings.forEach((finding) -> finding.setAgentType(AgentType.DOCUMENTATION));
-
-        return findings;
-    }
 
 }

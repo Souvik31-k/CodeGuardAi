@@ -53,6 +53,7 @@ public class RestClientConfig {
 		return HttpClients.custom()
 				.setConnectionManager(connectionManager)
 				.setDefaultRequestConfig(requestConfig)
+				.disableAutomaticRetries()
 				.build();
 	}
 

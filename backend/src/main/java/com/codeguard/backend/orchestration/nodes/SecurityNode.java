@@ -33,7 +33,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @Component
 public class SecurityNode implements AsyncNodeAction<ReviewState> {
         private static final Logger log = LoggerFactory.getLogger(SecurityNode.class);
-        private static final long TIMEOUT_SECONDS = 90;
+        private static final long TIMEOUT_SECONDS = 300;
         private static final int MAX_BATCH_CHARS = 10000;
 
         private final SecurityPromptBuilder promptBuilder;
