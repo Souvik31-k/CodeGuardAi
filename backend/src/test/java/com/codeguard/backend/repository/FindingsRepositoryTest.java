@@ -9,12 +9,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 
+import com.codeguard.backend.enums.AgentType;
+import com.codeguard.backend.enums.Severity;
 import com.codeguard.backend.model.CodeRepository;
 import com.codeguard.backend.model.Findings;
 import com.codeguard.backend.model.ReviewRun;
-// import com.codeguard.backend.repository.CodeRepositoryRepository;
-// import com.codeguard.backend.repository.FindingsRepository;
-// import com.codeguard.backend.repository.ReviewRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -62,8 +61,8 @@ public class FindingsRepositoryTest {
         details.put("confidence", "HIGH");
 
         Findings find = new Findings();
-        find.setAgentType(Findings.AgentType.SECURITY);
-        find.setSeverity(Findings.Severity.HIGH);
+        find.setAgentType(AgentType.SECURITY);
+        find.setSeverity(Severity.HIGH);
         find.setTitle("Null pointer Possiblity");
         find.setFilePath("src/main/java/Test.java");
         find.setLineNumber(22);
@@ -81,9 +80,9 @@ public class FindingsRepositoryTest {
 
         assertThat(result.get().getTitle()).isEqualTo("Null pointer Possiblity");
 
-        assertThat(result.get().getAgentType()).isEqualTo(Findings.AgentType.SECURITY);
+        assertThat(result.get().getAgentType()).isEqualTo(AgentType.SECURITY);
 
-        assertThat(result.get().getSeverity()).isEqualTo(Findings.Severity.HIGH);
+        assertThat(result.get().getSeverity()).isEqualTo(Severity.HIGH);
 
         assertThat(result.get().getFilePath()).isEqualTo("src/main/java/Test.java");
 

@@ -1,11 +1,13 @@
 package com.codeguard.backend.service;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.codeguard.backend.model.CodeRepository;
 import com.codeguard.backend.model.ReviewRun;
@@ -66,6 +68,15 @@ public class ReviewRunService {
                             "ReviewRun was created concurrently but could not be retrieved", e));
         }
 
+    }
+
+    @Transactional
+    public ReviewRun markFailed(ReviewRun reviewRun) {
+
+        reviewRun.setStatus(ReviewRun.Status.FAILED);
+        reviewRun.setFinishedAt(Instant.now());
+
+        return reviewRunRepository.save(reviewRun);
     }
 
 }

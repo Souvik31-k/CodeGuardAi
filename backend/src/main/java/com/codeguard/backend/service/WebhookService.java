@@ -17,8 +17,9 @@ import com.codeguard.backend.github.service.GitHubPullRequestService;
 import com.codeguard.backend.model.CodeRepository;
 import com.codeguard.backend.model.ReviewRun;
 import com.codeguard.backend.orchestration.model.ChangedFile;
+import com.codeguard.backend.orchestration.model.ReviewResult;
+import com.codeguard.backend.orchestration.model.ReviewResult.ReviewStatus;
 import com.codeguard.backend.orchestration.service.ReviewGraphService;
-import com.codeguard.backend.orchestration.state.ReviewState;
 import com.codeguard.backend.repository.CodeRepositoryRepository;
 import com.codeguard.backend.service.encryption.EncryptionService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -86,6 +87,7 @@ public class WebhookService {
                     .verify(signature,
                             payload,
                             plainWebhookSecret);
+
             // if the signate is not validated.
             if (!validSignature) {
 
@@ -205,37 +207,50 @@ public class WebhookService {
                         "Skipping ReviewRun {} because no changed files were found.",
                         reviewRun.getReviewRunId());
 
-                // Todo (Phase 4):
-                // reviewRunService.markCompleted(reviewRun);
-
                 return;
             }
-            /**
-             * Triggering the Supervisor Node
+            /*
+             * Execute the complete review graph:
+             *
+             * Supervisor
+             * ↓
+             * Four parallel specialist agents
+             * ↓
+             * Aggregator
+             *
+             * The final ReviewResult contains the aggregated findings,
+             * specialist execution results, review status and summary.
              */
-            ReviewState finalState = reviewGraphService.startReview(
+
+            ReviewResult reviewResult = reviewGraphService.startReview(
                     reviewRun,
                     changedFiles);
 
-            if (finalState.status() == ReviewState.ClassificationStatus.FAILED) {
+            ReviewStatus reviewStatus = reviewResult.getReviewStatus();
+
+            if (reviewStatus == ReviewStatus.FAILED) {
 
                 log.error(
                         "Review Graph failed for ReviewRun {}. Reason: {}",
                         reviewRun.getReviewRunId(),
-                        finalState.failureReason());
-
-                // Todo (Phase 4):
-                // reviewRunService.markFailed(reviewRun, finalState.failureReason());
-
+                        reviewResult.getSummary());
                 return;
+
+            } else if (reviewStatus == ReviewStatus.PARTIALLY_COMPLETED) {
+
+                log.warn(
+                        "Review Graph partially completed for Review Run {}. Summary: {}",
+                        reviewRun.getReviewRunId(),
+                        reviewResult.getSummary());
+                return;
+
+            } else {
+
+                log.info(
+                        "Review Graph completed successfully for ReviewRun {}. {} findings",
+                        reviewRun.getReviewRunId(),
+                        reviewResult.getFindings().size());
             }
-
-            log.info(
-                    "Review Graph completed successfully for ReviewRun {}",
-                    reviewRun.getReviewRunId());
-
-            // Todo (Phase 4):
-            // reviewRunService.markCompleted(reviewRun);
 
         } catch (Exception e) {
 
@@ -244,6 +259,7 @@ public class WebhookService {
                     reviewRun.getReviewRunId(),
                     e);
 
+            reviewRunService.markFailed(reviewRun);
             // Todo (Phase 4):
             // reviewRunService.markFailed(reviewRun, e.getMessage());
         }

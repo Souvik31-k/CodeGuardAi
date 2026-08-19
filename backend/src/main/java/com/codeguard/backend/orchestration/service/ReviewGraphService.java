@@ -9,9 +9,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.codeguard.backend.model.ReviewRun;
+import com.codeguard.backend.orchestration.model.AgentFinding;
 import com.codeguard.backend.orchestration.model.ChangedFile;
 import com.codeguard.backend.orchestration.model.FileClassification;
+import com.codeguard.backend.orchestration.model.ReviewResult;
+import com.codeguard.backend.orchestration.model.ReviewResult.ReviewStatus;
 import com.codeguard.backend.orchestration.state.ReviewState;
+import com.codeguard.backend.service.ReviewPersistenceService;
 
 @Service
 public class ReviewGraphService {
@@ -19,12 +23,14 @@ public class ReviewGraphService {
     private static final Logger log = LoggerFactory.getLogger(ReviewGraphService.class);
 
     private final CompiledGraph<ReviewState> compiledGraph;
+    private final ReviewPersistenceService persistenceService;
 
-    ReviewGraphService(CompiledGraph<ReviewState> compiledGraph) {
+    ReviewGraphService(CompiledGraph<ReviewState> compiledGraph, ReviewPersistenceService persistenceService) {
         this.compiledGraph = compiledGraph;
+        this.persistenceService = persistenceService;
     }
 
-    public ReviewState startReview(ReviewRun reviewRun, List<ChangedFile> changedFiles) {
+    public ReviewResult startReview(ReviewRun reviewRun, List<ChangedFile> changedFiles) {
 
         /**
          * Creating an initial ReviewState
@@ -38,12 +44,20 @@ public class ReviewGraphService {
                 ReviewState.CHANGED_FILES, changedFiles);
 
         /**
-         * Here the Supervisor Node is called to send the llm request.
-         * Classification of the files
+         * Execute the complete review graph:
+         *
+         * Supervisor
+         * ↓
+         * Four parallel specialist agents
+         * ↓
+         * Aggregator
+         *
+         * The final state contains the aggregated ReviewResult.
          */
+
         ReviewState finalState = compiledGraph
                 .invoke(inti)
-                .orElseThrow(() -> new IllegalStateException("Graph execution returned no state"));
+                .orElseThrow(() -> new IllegalStateException("Graph execution returned final State"));
 
         for (FileClassification classification : finalState.classifications()) {
 
@@ -51,12 +65,32 @@ public class ReviewGraphService {
                     classification.getFilePath(),
                     classification.getCategory());
         }
-        return finalState;
-        // phase 4:
-        //
-        // persist classification
-        // dispatch Speacialist agents
-        // update ReviewRun Status
+
+        ReviewResult reviewResult = finalState.aggregatedResult();
+
+        if (reviewResult == null) {
+
+            throw new IllegalStateException("Review Graph completed without an aggregated result.");
+
+        }
+
+        String summary = reviewResult.getSummary();
+
+        ReviewStatus status = reviewResult.getReviewStatus();
+
+        List<AgentFinding> agentFindings = reviewResult.getFindings();
+
+        log.info("Review Run {} completed with status {} and {} findings. Summary: {}",
+                finalState.reviewRunId(),
+                status,
+                agentFindings.size(),
+                summary);
+
+        persistenceService.persist(reviewRun.getReviewRunId(), reviewResult);
+
+        return reviewResult;
+
+        // Graph execution and aggregated result persistence are complete.
 
     }
 }

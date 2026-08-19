@@ -2,6 +2,8 @@ package com.codeguard.backend.orchestration.prompt;
 
 import java.util.StringJoiner;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import com.codeguard.backend.llm.LlmRequest;
@@ -10,40 +12,77 @@ import com.codeguard.backend.orchestration.state.ReviewState;
 
 @Component
 public class SupervisorPromptBuilder {
+
+  private static final int MAX_PATCH_CHARS_PER_FILE = 1500;
+  private static final int MAX_TOTAL_PATCH_CHARS = 12000;
+  private static final Logger log = LoggerFactory.getLogger(SupervisorPromptBuilder.class);
+
   public LlmRequest buildPrompt(ReviewState state) {
     String systemPrompt = """
         You are the Supervisor Agent of the CodeGuard AI Platform.
 
-        Your job is to classify each changed file into exactly one specialist agent.
-
-        Classify based on the ACTUAL CODE CHANGES shown in the patch, not only the filename.
+        Your job is to classify changed files in a pull request
+        into one or more review categories.
 
         Use these categories:
 
         - SECURITY
-          Authentication, authorization, encryption, secrets, JWT, passwords,
-          input validation, SQL injection, XSS, CSRF, permissions, OAuth, security configuration.
+          Code whose primary purpose or changed behavior involves
+          authentication, authorization, credentials, secrets,
+          cryptography, JWT, OAuth, security configuration,
+          input validation for security purposes, SQL injection,
+          XSS, CSRF, or other security-sensitive functionality.
 
-        - PERFORMANCE
-          Algorithms, loops, caching, database queries, memory usage,
-          concurrency, threading, asynchronous execution, collections,
-          CPU-intensive operations and performance optimizations.
+          Do NOT classify files as SECURITY merely because they mention
+          security concepts, contain security-related comments, or invoke
+          security components. Classify based on the primary purpose of
+          the changed code.
+
+        - QUALITY
+          General application or infrastructure code whose primary purpose
+          involves business logic, application logic, architecture,
+          maintainability, error handling, code smells, performance,
+          readability, design, or clean-code practices.
+
+          QUALITY is the default category only when the file does not
+          primarily belong to SECURITY, TEST, or DOCUMENTATION.
+
+          Do NOT classify a file as QUALITY merely because it supports
+          another review category. Classify based on the primary purpose
+          of the changed code.
 
         - TEST
-          Unit tests, integration tests, mocks, assertions, JUnit,
-          Mockito, TestNG, testing utilities.
+          Actual test code and test infrastructure:
+          unit tests, integration tests, test fixtures,
+          test utilities, test configuration, mocks,
+          and test resources.
+
+          Do NOT classify application components that merely
+          analyze, execute, orchestrate, or generate tests as TEST.
+          Classify based on the primary purpose of the changed code.
 
         - DOCUMENTATION
-          README, Markdown, JavaDoc, comments, documentation,
-          guides, API documentation and docs.
+          Files whose primary purpose is communicating information
+          about the software rather than executing application logic.
+
+          This includes README files, Markdown documentation,
+          API documentation, documentation pages, usage guides,
+          setup instructions, examples intended primarily for users,
+          and documentation-specific comments or configuration.
+
+          Do NOT classify source-code files as DOCUMENTATION merely
+          because they contain comments, JavaDoc, or documentation
+          strings. Classify the file according to the primary purpose
+          of the changed content.
 
         Rules:
 
         1. Every file must belong to exactly one category.
-        2. Use the patch as the primary evidence.
-        3. Use the filename only if the patch is insufficient.
-        4. Return ONLY valid JSON.
-        5. Do not wrap the JSON inside markdown.
+        2. Use the available patch as the primary evidence.
+        3. If the patch is truncated, use the available portion of the patch together
+           with the file path and filename.
+        4. If no patch is available, classify the file using its path and filename.
+        5. Do not invent code or behavior that is not present in the provided evidence.
         6. Do not explain your reasoning.
 
         Response format:
@@ -60,7 +99,64 @@ public class SupervisorPromptBuilder {
 
     StringJoiner changedFiles = new StringJoiner("\n\n");
 
+    int totalPatchChars = 0;
+    int truncatedFiles = 0;
+
     for (ChangedFile file : state.changedFiles()) {
+
+      String patch = file.getPatch();
+
+      if (patch == null || patch.isBlank()) {
+
+        changedFiles.add("""
+            File:
+            %s
+
+            Patch:
+            (No file patch available)
+
+            Classification guidance:
+            Classify using the file path and filename.
+            Do not invent code that is not available.
+            """.formatted(file.getFilePath()));
+
+        continue;
+      }
+
+      int remaining = MAX_TOTAL_PATCH_CHARS - totalPatchChars;
+
+      String boundedPatch;
+
+      if (remaining <= 0) {
+
+        boundedPatch = """
+            (Patch omitted because the Supervisor patch
+            budget was reached. Classify using the file
+            path and filename.)
+            """;
+
+      } else {
+
+        int maxChars = Math.min(
+            MAX_PATCH_CHARS_PER_FILE,
+            remaining);
+
+        if (patch.length() > maxChars) {
+
+          boundedPatch = patch.substring(0, maxChars)
+              + "\n[PATCH TRUNCATED]";
+
+          totalPatchChars += maxChars;
+          truncatedFiles++;
+
+        } else {
+
+          boundedPatch = patch;
+
+          totalPatchChars += patch.length();
+        }
+      }
+
       changedFiles.add("""
           File:
           %s
@@ -69,9 +165,7 @@ public class SupervisorPromptBuilder {
           %s
           """.formatted(
           file.getFilePath(),
-          file.getPatch() == null
-              ? "(No file patch available)"
-              : file.getPatch()));
+          boundedPatch));
     }
 
     String userPrompt = """
@@ -91,6 +185,13 @@ public class SupervisorPromptBuilder {
     request.setSystemPrompt(systemPrompt);
     request.setUserPrompt(userPrompt);
     request.setTemperature(0.0);
+
+    log.info(
+        "Supervisor prompt: {} chars, patch chars: {}, files: {}, truncated: {}",
+        userPrompt.length(),
+        totalPatchChars,
+        state.changedFiles().size(),
+        truncatedFiles);
 
     return request;
   }
