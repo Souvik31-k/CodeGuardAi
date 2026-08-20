@@ -144,10 +144,15 @@ backend
 5. Create a new `ReviewRun`.
 6. Fetch changed files using the GitHub REST API.
 7. Invoke the LangGraph workflow.
-8. Generate the Supervisor prompt.
-9. Send the prompt to the Groq LLM.
-10. Classify every changed file.
-11. Store the classifications in the workflow state.
+8. Rate Limiter for the LLM.
+9. Generate the Supervisor prompt.
+10. Send the prompt to the Groq LLM.
+11. Classify every changed file.
+12. Store the classifications in the workflow state.
+13. Generate the specialist Node prompts.
+14. Run the Specialist Node parallelly and store the Specialist Result.
+15. Collect the specialist result to the Aggregator Node
+16. Generate Summary and persist the Review Run and Findings into the DataBase. 
 
 ---
 
@@ -160,7 +165,8 @@ The Supervisor Agent classifies every changed file into exactly one of the follo
 - TEST
 - DOCUMENTATION
 
-These classifications will later determine which specialist AI agent is responsible for reviewing each file.
+These classifications  determine which specialist AI agent is responsible for reviewing each file.
+Pass the Specialist Result from the Specialist Node and pass down to the Aggregator Node for Summary of the PR review.
 
 ---
 
@@ -168,11 +174,6 @@ These classifications will later determine which specialist AI agent is responsi
 
 ## 🚧 Upcoming Phases
 
-- Security Agent
-- Performance Agent
-- Test Agent
-- Documentation Agent
-- Multi-agent orchestration
 - Retrieval-Augmented Generation (RAG)
 - pgvector integration
 - Embedding generation
